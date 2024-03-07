@@ -415,6 +415,7 @@ class TransformerTest(NeuronTestCase):
 
             #print(self._learner_state_partition_specs)
             jax.debug.visualize_array_sharding(model_params['decoder']['transformer']['layer0']['feed_forward']['linear1']['weight'])
+            jax.debug.visualize_array_sharding(model_params['decoder']['transformer']['layer0']['feed_forward']['linear2']['weight'])
             #norm = jax.jit(model.decoder.transformer.layer0.self_attention.norm, in_shardings=(NamedSharding(mesh, PartitionSpec('data', 'model', None)),),
              #              out_shardings=(NamedSharding(mesh, PartitionSpec('data', None, None))))
             #create_causal_mask = jax.jit(model.decoder.create_causal_mask, out_shardings=NamedSharding(mesh, PartitionSpec('data', 'model', None, None)))
@@ -434,8 +435,12 @@ class TransformerTest(NeuronTestCase):
             #    layer.self_attention.attention = self_attention
 
             # Above jit will prevent an all to all.
+<<<<<<< HEAD
             batch_size, tgt_len = DP_DEGREE, 4096
             seq_len = 2048 # the individual seq length packed into 4096
+=======
+            batch_size, tgt_len = DP_DEGREE * 2, 4096
+>>>>>>> added gradient accumulation using lax.scan
             rng = np.random.default_rng(seed=123)
 
             input_ids = jax.random.randint(
@@ -533,6 +538,61 @@ class TransformerTest(NeuronTestCase):
             print(f'Loss={loss}')
            # print(f'Grad={grad}')
             #print(f'Weight={weights}')
+
+            @jax.jit
+            def _copy(model_tree):
+                return jax.tree_map(lambda x: jnp.copy(x), model_tree)
+
+            accum = 1
+            if accum == 1:
+                # ptoulme differentiate with respect to argnums=2 the weights
+                run = jax.jit(jax.value_and_grad(run, argnums=2))
+                grad_buffer = _copy(model_params)
+
+                def train_step(input_ids, target_labels, model_params, grad_buffer):
+
+                    microbatches = jnp.stack([input_ids, target_labels], axis=1) # check if correct
+
+                    def run_microbatch(grad_buffer, microbatch):
+                        input_ids, target_labels = jnp.split(microbatch, 2, axis=1) # check if correct
+                        loss, microbatch_grads = run(input_ids, target_labels, model_params)
+
+                        # accumulate gradients
+                        print("microbatch_grads", microbatch_grads, "grad_buffer", grad_buffer)
+                        grad_buffer = jax.tree_map(lambda x, y: x + y, microbatch_grads, grad_buffer)
+                        return grad_buffer, loss
+
+                    grad_buffer, loss = jax.lax.scan(run_microbatch, grad_buffer, microbatches)#, unroll=1) # check if correct
+
+                    return loss, grad_buffer
+
+                train_step = jax.jit(train_step, in_shardings=(NamedSharding(mesh, PartitionSpec('data', None)),
+                                                                    NamedSharding(mesh, PartitionSpec('data', None)), 
+                                                                    self._trainer_state_partition_specs, 
+                                                                    self._trainer_state_partition_specs))
+
+                loss, grad = train_step(input_ids, target_labels, model_params, grad_buffer)
+            else:
+              # ptoulme differentiate with respect to argnums=2 the weights
+                run = jax.jit(jax.value_and_grad(run, argnums=2))
+
+                def train_step(input_ids, target_labels, model_params):
+
+                    microbatch_grads, loss = run(input_ids, target_labels, model_params)
+                    print("microbatch_grads", microbatch_grads, "\nloss", loss)
+                    return loss, microbatch_grads
+
+                train_step = jax.jit(train_step, in_shardings=(NamedSharding(mesh, PartitionSpec('data', None)),
+                                                                    NamedSharding(mesh, PartitionSpec('data', None)), 
+                                                                    self._trainer_state_partition_specs))
+
+                loss, grad = train_step(input_ids, target_labels, model_params)
+
+            # loss, grad = run(input_ids, target_labels, segment_ids, positions, model_params)
+            print(f'Loss = {loss}')
+            print(f'grad = {grad}, {grad.shape}')
+
+
 def set_double_shard_weights_config(
         cfg: Union[TransformerLayer.Config, Sequence[TransformerLayer.Config]],
         *,
@@ -720,3 +780,11 @@ def _opt_params(model_params: NestedTensor, _model_param_specs) -> NestedOptPara
         model_params,
         specs,
     )
+import unittest
+if __name__ == '__main__':
+    # unittest.main()
+
+    # Uncomment to run individual tests
+    suite = unittest.TestSuite([TransformerTest('test_model')])
+
+    unittest.TextTestRunner(buffer=True).run(suite)
