@@ -784,7 +784,83 @@ class SpmdTrainer(Module):
         with jax.profiler.StepTraceAnnotation("train", step_num=self.step):
             # Note(Jan 2022):
             # pjit currently requires all parameters to be specified as positional args.
-            self._trainer_state, outputs = self._jit_train_step(self._trainer_state, input_batch)
+
+            def accumulate_grad(microbatch_grads, grad_buffer):
+                if grad_buffer == None:
+                    grad_buffer = microbatch_grads
+                else :
+                    grad_buffer = jax.tree_map(lambda x, y: x + y, microbatch_grads, grad_buffer)
+                return grad_buffer
+
+            def mean_metrics(metrics):
+                def maybe_mean(x):
+                    if x.size > 0:
+                        x / self.num_accum
+                    return x
+                metrics = jax.tree_map(maybe_mean, metrics)
+                
+                # for k, v, in metrics.items():
+                #     v = v / self.num_accum
+                #     metrics[k] = v
+
+                print("metrics", metrics)
+                return metrics
+                # def maybe_concatenate_arrays(x, y):
+                #     if x.size > 0 and y.size > 0:
+                #         jax.debug.print("x {}, y {}", x, y)
+                #         print("x {}, y {}", x, y)
+                #         return jnp.concatenate([x, y], axis=0)
+                #     return y
+                # grad_buffer = jax.tree_map(lambda x, y: x + y, microbatch_grads, grad_buffer)
+
+            def accumulate_metrics(microbatch, buffer):
+                def maybe_add(x, y):
+                    import numpy as np
+                    if x.size > 0 and y.size > 0:
+                        jax.debug.print("x {}, y {}", x, y)
+                        print("x {}, y {}", x, y)
+                        return jnp.add(x, y)
+                    return y
+                
+                if buffer == None:
+                    buffer = microbatch
+                else :
+                    buffer = jax.tree_map(maybe_add, microbatch, buffer)
+                return buffer       
+
+
+            accumulate_grad = jax.jit(accumulate_grad)
+            # accumulate_metrics = jax.jit(accumulate_metrics)
+
+            # breakpoint()
+            self.num_accum = 2
+            (train_step, opt_step) = self._jit_train_step
+            metric_batch = None
+            grad_buffer = None
+
+            # divide global batches into equal microbatches for accumulation
+            split_batches = [{} for i in range(self.num_accum)]
+            for k, v in input_batch.items():
+                v_list = jnp.split(v, self.num_accum, axis=0)
+                for i in range(self.num_accum):
+                    split_batches[i][k] = v_list[i]
+
+            for i in range(self.num_accum):
+                print("Running grad accumulation iteration ",i)
+
+                grad, forward_output_collection, metrics = train_step(self._trainer_state, split_batches[i])
+                grad_buffer = accumulate_grad(grad, grad_buffer)
+                metric_batch = accumulate_metrics(metrics, metric_batch)
+
+                # breakpoint()
+                # metric_batch = metric_batch.append(metrics)
+    
+            metric_batch = mean_metrics(metric_batch)
+            self._trainer_state, outputs = opt_step(self._trainer_state, forward_output_collection, grad)
+            metric_batch.update(summaries=outputs)
+            outputs = metric_batch
+            print("metric_batch", metric_batch)
+            print("outputs", outputs)
 
         if self.step % 100 == 0 or 0 <= self.step <= 5:
             self._step_log(
@@ -835,22 +911,49 @@ class SpmdTrainer(Module):
         return evaler_summaries
 
     def _pjit_train_step(self) -> jax.stages.Wrapped:
-        return pjit(
+
+        model_param_partition_specs = jax.tree_util.tree_map(
+            lambda spec: spec.mesh_axes, self._model_param_specs
+        )
+
+        grad_partition_specs = model_param_partition_specs
+
+        jit_train_step = pjit(
             self._train_step,
             in_shardings=(
                 self._trainer_state_partition_specs,
                 self._train_step_input_partition_specs(),
             ),
+            # out_shardings=(
+            #     grad_partition_specs,
+            #     # dict(
+            #     #     summaries=None,
+            #     #     loss=None,
+            #     #     aux=None,
+            #     # ),
+            # ),
+            # donate_argnums=(0,),  # donate the state
+        )
+        jit_opt_step = pjit(
+            self._opt_step,
+            # in_shardings=(
+            #     self._trainer_state_partition_specs,
+            #     self._trainer_state_partition_specs,
+            #     self._trainer_state_partition_specs,
+            # ),
             out_shardings=(
                 self._trainer_state_partition_specs,
                 dict(
-                    summaries=None,
-                    loss=None,
-                    aux=None,
+                    model=None,
+                    learner=None,
                 ),
             ),
-            donate_argnums=(0,),
         )
+
+        return (jit_train_step, jit_opt_step)
+
+    def _pjit_opt_step(self) -> jax.stages.Wrapped:
+        return 
 
     def compile_train_step(self) -> jax.stages.Compiled:
         with self.mesh():
@@ -866,8 +969,8 @@ class SpmdTrainer(Module):
                 self.input.dataset().element_spec,
             )
             jit_train_step = self._pjit_train_step()
-            lowered_train_step = jit_train_step.lower(trainer_state_specs, input_batch_specs)
-            return lowered_train_step.compile()
+            lowered_train_step = (jit_train_step[0].lower(trainer_state_specs, input_batch_specs), jit_train_step[1].lower(trainer_state_specs, trainer_state_specs, trainer_state_specs))
+            return (lowered_train_step[0].compile(), lowered_train_step[1].compile())
 
     def _train_step(
         self,
@@ -879,8 +982,8 @@ class SpmdTrainer(Module):
             input_batch, batch_axis_names=self.config.batch_axis_names
         )
 
-        new_prng_key, param_noise_key, forward_key, learner_key = jax.random.split(
-            state.prng_key, 4
+        param_noise_key, forward_key, return_key = jax.random.split(
+            state.prng_key, 3
         )
 
         def train_cast(in_tree):
@@ -928,6 +1031,27 @@ class SpmdTrainer(Module):
         (loss, (forward_aux, forward_output_collection)), grads = forward_and_grad(
             model_parameters_grad, model_parameters_nograd, input_batch
         )
+
+        metrics = dict(
+            loss=loss,
+            aux=forward_aux,
+        )
+
+        return grads, forward_output_collection, metrics
+        # print("grads", grads)
+        # return grads
+
+    def _opt_step(
+        self,
+        state: TrainerState,
+        forward_output_collection,
+        grads
+    ) -> Tuple[TrainerState, NestedTensor]:
+
+        new_prng_key, learner_key, return_key = jax.random.split(
+            state.prng_key, 3
+        )
+
         opt_params = self._opt_params(state.model)
         state_updates = self._maybe_prune_empty(forward_output_collection.state_updates)
         updated_model_params, learner_output_collection = F(
@@ -943,11 +1067,13 @@ class SpmdTrainer(Module):
             model=updated_model_params,
             learner=learner_output_collection.state_updates,
         )
+        
         # TODO(ruoming): only retrieve summaries when necessary.
         summaries = dict(
             model=forward_output_collection.summaries,
             learner=learner_output_collection.summaries,
         )
+        return updated_state, summaries
         return updated_state, dict(
             summaries=summaries,
             loss=loss,
