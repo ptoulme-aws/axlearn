@@ -435,12 +435,12 @@ class TransformerTest(NeuronTestCase):
             #    layer.self_attention.attention = self_attention
 
             # Above jit will prevent an all to all.
-<<<<<<< HEAD
-            batch_size, tgt_len = DP_DEGREE, 4096
-            seq_len = 2048 # the individual seq length packed into 4096
-=======
-            batch_size, tgt_len = DP_DEGREE * 2, 4096
->>>>>>> added gradient accumulation using lax.scan
+            NUM_ACCUM_MICROBATCHES = 2
+            accum = 1
+            if accum == 1:
+                batch_size, tgt_len = DP_DEGREE * NUM_ACCUM_MICROBATCHES, 4096
+            else:
+                batch_size, tgt_len = DP_DEGREE, 4096
             rng = np.random.default_rng(seed=123)
 
             input_ids = jax.random.randint(
@@ -540,14 +540,14 @@ class TransformerTest(NeuronTestCase):
             #print(f'Weight={weights}')
 
             @jax.jit
-            def _copy(model_tree):
-                return jax.tree_map(lambda x: jnp.copy(x), model_tree)
+            def _copy_zero(model_tree):
+                return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
 
-            accum = 1
             if accum == 1:
+
                 # ptoulme differentiate with respect to argnums=2 the weights
                 run = jax.jit(jax.value_and_grad(run, argnums=2))
-                grad_buffer = _copy(model_params)
+                grad_buffer = _copy_zero(model_params)
 
                 def train_step(input_ids, target_labels, model_params, grad_buffer):
 
@@ -586,8 +586,37 @@ class TransformerTest(NeuronTestCase):
                                                                     NamedSharding(mesh, PartitionSpec('data', None)), 
                                                                     self._trainer_state_partition_specs))
 
-                loss, grad = train_step(input_ids, target_labels, model_params)
+                def accumulate_grad(microbatch_grads, grad_buffer):
+                    if grad_buffer == None:
+                        grad_buffer = grad
+                    else :
+                        grad_buffer = jax.tree_map(lambda x, y: x + y, microbatch_grads, grad_buffer)
+                    return grad_buffer
 
+                accumulate_grad = jax.jit(accumulate_grad)
+                # input_ids = jnp.split(input_ids, NUM_ACCUM_MICROBATCHES, axis=0)
+                # input_ids = jnp.stack(input_ids)
+                # target_labels = jnp.split(target_labels, NUM_ACCUM_MICROBATCHES, axis=0)
+                # target_labels = jnp.stack(target_labels)
+                # print("input_ids.shape", input_ids.shape)
+                carry_grad = None
+
+                for i in range(NUM_ACCUM_MICROBATCHES):
+
+                    print("run microbatch ", i)
+                    loss, grad = train_step(input_ids, target_labels, model_params)
+                    carry_grad = accumulate_grad(grad, carry_grad)
+
+                    # Assert that grad and carry grad have same sharding
+                    grad_leaves = []
+                    acc_leaves = []
+                    grad_leaves += jax.tree_util.tree_leaves_with_path(grad)
+                    acc_leaves += jax.tree_util.tree_leaves_with_path(carry_grad)
+
+                    for (grad_path, grad_param), (scc_path, acc_param) in zip(grad_leaves, acc_leaves):
+                        with self.subTest(msg=(str(grad_path))):
+                            self.assertTrue(grad_param.sharding.is_equivalent_to(acc_param.sharding))
+            
             # loss, grad = run(input_ids, target_labels, segment_ids, positions, model_params)
             print(f'Loss = {loss}')
             print(f'grad = {grad}, {grad.shape}')
