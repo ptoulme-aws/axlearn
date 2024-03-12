@@ -843,7 +843,7 @@ class SpmdTrainer(Module):
         # )
         # grad_partition_specs = model_param_partition_specs
 
-        if self.num_accum > 0:
+        if self.num_accum > 1:
             self.jit_train_step_ga = pjit(
                 self._train_step_ga,
                 in_shardings=(
@@ -896,7 +896,8 @@ class SpmdTrainer(Module):
         def mean_metrics(metrics):
             def maybe_mean(x):
                 if x.size > 0:
-                    x / self.num_accum
+                    # print("x {}", x)
+                    x = x / self.num_accum
                 return x
             metrics = jax.tree_map(maybe_mean, metrics)
 
@@ -907,8 +908,8 @@ class SpmdTrainer(Module):
             def maybe_add(x, y):
                 import numpy as np
                 if x.size > 0 and y.size > 0:
-                    jax.debug.print("x {}, y {}", x, y)
-                    print("x {}, y {}", x, y)
+                    # jax.debug.print("x {}, y {}", x, y)
+                    # print("x {}, y {}", x, y)
                     return jnp.add(x, y)
                 return y
             
@@ -933,18 +934,18 @@ class SpmdTrainer(Module):
                 split_batches[i][k] = v_list[i]
 
         for i in range(self.num_accum):
-            print("Running grad accumulation iteration ",i)
+            # print("Running grad accumulation iteration ",i)
 
             grad, forward_output_collection, metrics = self.jit_train_step_ga(self._trainer_state, split_batches[i])
             grad_buffer = accumulate_grad(grad, grad_buffer)
             metric_batch = accumulate_metrics(metrics, metric_batch)
 
         metric_batch = mean_metrics(metric_batch)
+
         self._trainer_state, outputs = self.jit_opt_step_ga(self._trainer_state, forward_output_collection, grad)
         metric_batch.update(summaries=outputs)
         outputs = metric_batch
-        print("metric_batch", metric_batch)
-        print("outputs", outputs)
+        # print("outputs", outputs)
 
         return self._trainer_state, outputs
 
