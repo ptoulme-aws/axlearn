@@ -874,10 +874,7 @@ class SpmdTrainer(Module):
         state: TrainerState,
         input_batch: Dict[str, Any],
     ) -> Tuple[TrainerState, NestedTensor]:
-        # Shard and (possibly) dispatch the input batch.
-        input_batch = utils.dispatch_input_batch(
-            input_batch, batch_axis_names=self.config.batch_axis_names
-        )
+
 
         new_prng_key, param_noise_key, forward_key, learner_key = jax.random.split(
             state.prng_key, 4
@@ -924,6 +921,78 @@ class SpmdTrainer(Module):
             should_compute_gradients,
             state.model,
         )
+
+        self.accum = 2
+        if self.accum > 1:
+
+            print("input_batch", input_batch)
+            # create evenly sized accumulation microbatches, keep sequence dimension as it is.
+            input_batch = jax.tree_map(lambda x: x.reshape(self.accum,  -1, *x.shape[1:]), input_batch)
+
+            # Shard and (possibly) dispatch the input batch.
+            input_batch = utils.dispatch_input_batch(
+                input_batch, batch_axis_names=[None, *self.config.batch_axis_names]
+            )
+
+            def _copy_zero(model_tree):
+                return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
+
+            def _forward_ga(model_parameters_grad, model_parameters_no_grad, forward_input_batch):
+                # model_parameters = jax.tree_util.tree_map(
+                #     lambda compute_grad, pg, png: pg if compute_grad else png,
+                #     should_compute_gradients,
+                #     model_parameters_grad,
+                #     model_parameters_no_grad,
+                # )
+
+                # params = train_cast(model_parameters)  # A copy of `model_parameters`.
+                # params = self.model.apply_parameter_noise_recursively(param_noise_key, params)
+
+                def run_microbatch(grad_buffer, microbatch):
+                    print("inside scan microbatch", microbatch)
+
+                    # @jax.value_and_grad
+                    # def microbatch_forward():
+                    #     (loss, aux), model_output_collection = F(
+                    #         self.model,
+                    #         state=params,
+                    #         is_training=True,
+                    #         prng_key=forward_key,
+                    #         inputs=dict(input_batch=train_cast(microbatch)),
+                    #     )
+
+                    #     return (loss, aux), model_output_collection
+
+                    forward_and_grad(model_parameters_grad, model_parameters_nograd, microbatch)
+
+                    # forward_and_grad = jax.value_and_grad(_forward, has_aux=True)
+                    microbatch_forward = jax.value_and_grad(microbatch_forward, )
+                    metrics, microbatch_grads = microbatch_forward(forward_input_batch)
+
+                    # accumulate gradients
+                    grad_buffer = jax.tree_map(lambda x, y: x + y, microbatch_grads, grad_buffer)
+                    return grad_buffer, metrics
+
+                # check if we really need this code block to keep gradients
+                model_parameters = jax.tree_util.tree_map(
+                    lambda compute_grad, pg, png: pg if compute_grad else png,
+                    should_compute_gradients,
+                    model_parameters_grad,
+                    model_parameters_nograd,
+                )
+                grad_buffer = _copy_zero(model_parameters)
+
+                print("forward_input_batch", forward_input_batch)
+                grad_buffer, metrics = jax.lax.scan(run_microbatch, grad_buffer, forward_input_batch)
+
+                return metrics, grad_buffer
+            forward_and_grad = _forward_ga
+        else:
+            # Shard and (possibly) dispatch the input batch.
+            input_batch = utils.dispatch_input_batch(
+                input_batch, batch_axis_names=self.config.batch_axis_names
+            )
+
         # `grads` are computed for `model_parameters_grad`.
         (loss, (forward_aux, forward_output_collection)), grads = forward_and_grad(
             model_parameters_grad, model_parameters_nograd, input_batch
