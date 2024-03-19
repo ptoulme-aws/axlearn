@@ -42,8 +42,6 @@ from axlearn.common.utils import (
     thread_stack_traces,
 )
 
-from jax.experimental import maps
-
 
 def _prune_empty(in_tree: NestedTensor) -> NestedTensor:
     """Returns a shallow copy of the input tree with empty subtrees pruned.
