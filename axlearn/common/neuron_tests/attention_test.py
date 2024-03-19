@@ -248,8 +248,9 @@ class TransformerTest(NeuronTestCase):
     def test_model(self):
         """A test of Stacked TransformerLayer backward."""
         jax.config.update("jax_default_prng_impl", "rbg")
-        TP_DEGREE = 8
-        DP_DEGREE = (int(os.getenv('SLURM_JOB_NUM_NODES'))*32)//TP_DEGREE
+        TP_DEGREE = 2
+        DP_DEGREE = (8)//TP_DEGREE
+
         mesh = jax.sharding.Mesh(np.array(jax.devices()).reshape(DP_DEGREE, TP_DEGREE)[:, None, None, None, :],
                                  axis_names=("data", "seq", "expert", "fsdp", "model"),)
         with mesh:
@@ -435,7 +436,7 @@ class TransformerTest(NeuronTestCase):
             #    layer.self_attention.attention = self_attention
 
             # Above jit will prevent an all to all.
-            NUM_ACCUM_MICROBATCHES = 2
+            NUM_ACCUM_MICROBATCHES = 4
             accum = 1
             if accum == 1:
                 batch_size, tgt_len = DP_DEGREE * NUM_ACCUM_MICROBATCHES, 4096
@@ -551,18 +552,25 @@ class TransformerTest(NeuronTestCase):
 
                 def train_step(input_ids, target_labels, model_params, grad_buffer):
 
-                    microbatches = jnp.stack([input_ids, target_labels], axis=1) # check if correct
+                    input_ids = input_ids.reshape(NUM_ACCUM_MICROBATCHES, DP_DEGREE, -1)
+                    input_ids = jax.lax.with_sharding_constraint(input_ids, PartitionSpec(None, 'data', None))
 
+                    target_labels = target_labels.reshape(NUM_ACCUM_MICROBATCHES, DP_DEGREE, -1)
+                    target_labels = jax.lax.with_sharding_constraint(target_labels, PartitionSpec(None, 'data', None))
+
+                    # b,s
                     def run_microbatch(grad_buffer, microbatch):
-                        input_ids, target_labels = jnp.split(microbatch, 2, axis=1) # check if correct
+                        input_ids, target_labels = microbatch
+                        print("inside scan input_ids", input_ids.shape)
                         loss, microbatch_grads = run(input_ids, target_labels, model_params)
 
                         # accumulate gradients
                         print("microbatch_grads", microbatch_grads, "grad_buffer", grad_buffer)
                         grad_buffer = jax.tree_map(lambda x, y: x + y, microbatch_grads, grad_buffer)
+                        # loss = None
                         return grad_buffer, loss
 
-                    grad_buffer, loss = jax.lax.scan(run_microbatch, grad_buffer, microbatches)#, unroll=1) # check if correct
+                    grad_buffer, loss = jax.lax.scan(run_microbatch, grad_buffer, (input_ids, target_labels))
 
                     return loss, grad_buffer
 
@@ -619,7 +627,7 @@ class TransformerTest(NeuronTestCase):
             
             # loss, grad = run(input_ids, target_labels, segment_ids, positions, model_params)
             print(f'Loss = {loss}')
-            print(f'grad = {grad}, {grad.shape}')
+            # print(f'grad = {grad}, {grad.shape}')
 
 
 def set_double_shard_weights_config(
