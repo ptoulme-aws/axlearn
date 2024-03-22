@@ -80,7 +80,7 @@ class SpmdTrainer(Module):
 
         # The input partition:
         # Options: FULL (default), DATA, REPLICATED
-        input_partition_type: Required[DataPartitionType] = DataPartitionType.DATA
+        input_partition_type: Required[DataPartitionType] = DataPartitionType.FULL
 
         # A summary writer to log tagged summary values.
         summary_writer: BaseWriter.Config = SummaryWriter.default_config()
@@ -663,7 +663,7 @@ class SpmdTrainer(Module):
                 logging.info("Transfer to device completed.")
                 return self._trainer_state
 
-        if False and self.config.cpu_init == False:
+        if self.config.cpu_init == False:
             logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
             logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
             init_computation = pjit(

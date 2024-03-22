@@ -245,6 +245,7 @@ def model_config(
         batch_axis_names=batch_axis_names,
         seq_axis_names="seq",
     )
+    cfg.dtype = jnp.float32
     if jax.default_backend() == "neuron":
         cfg.dtype = jnp.bfloat16
     # Shard some FFN and attention weights over multiple axes.
@@ -530,6 +531,10 @@ def get_trainer_config_fn(
                 pad_example_fn=input_tf_data.default_pad_example_fn,
             ),
         )
+        cfg.input_partition_type = input_partition_type
+        if jax.default_backend() == "neuron":
+            cfg.cpu_init = True
+
         cfg.evalers = {}
         for name, evaler_cfg in evalers.items():
             evaler_cfg.input.batcher.set(global_batch_size=eval_batch_size or train_batch_size)
