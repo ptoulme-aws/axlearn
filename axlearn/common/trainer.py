@@ -41,18 +41,8 @@ from axlearn.common.utils import (
     match_regex_rules,
     prune_tree,
     thread_stack_traces,
+    TensorSpec,
 )
-import jax
-from jax import numpy as jnp
-from jax.sharding import PartitionSpec
-from jax.sharding import NamedSharding
-from axlearn.common.base_layer import ParameterSpec
-from axlearn.common.learner import Learner
-from axlearn.common.module import functional as F, InvocationContext
-from axlearn.common.optimizer_base import NestedOptParam, OptParam
-from typing import Any,Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
-from axlearn.common.utils import Tensor, NestedTensor, TensorSpec
-import os
 
 def _prune_empty(in_tree: NestedTensor) -> NestedTensor:
     """Returns a shallow copy of the input tree with empty subtrees pruned.
@@ -580,7 +570,7 @@ class SpmdTrainer(Module):
             )
 
         model_specs = jax.tree_util.tree_map(
-            lambda value: create_named_sharding(value, self.mesh()) if isinstance(value, PartitionSpec) else None,
+            lambda value: create_named_sharding(value, self.mesh()) if isinstance(value, jax.sharding.PartitionSpec) else None,
             self._trainer_state_partition_specs[1],
         )
         learner_specs = jax.tree_util.tree_map(
@@ -1020,7 +1010,7 @@ def create_named_sharding_optimizer(tensor_spec, mesh):
     zero1=True
     if isinstance(tensor_spec, TensorSpec):
         if tensor_spec.mesh_axes == (None,):
-            return NamedSharding(mesh, PartitionSpec(None))
+            return jax.sharding.NamedSharding(mesh, PartitionSpec(None))
         else:
             if len(tensor_spec.mesh_axes) > len(tensor_spec.shape):
                 adjusted_mesh_axes = tensor_spec.mesh_axes[1:]
@@ -1028,13 +1018,13 @@ def create_named_sharding_optimizer(tensor_spec, mesh):
                 adjusted_mesh_axes = tensor_spec.mesh_axes
             if zero1:
                 adjusted_mesh_axes = tuple('data' if axis == 'fsdp' else axis for axis in adjusted_mesh_axes)
-            partition_spec = PartitionSpec(*adjusted_mesh_axes)
-            return NamedSharding(mesh, partition_spec)
+            partition_spec = jax.sharding.PartitionSpec(*adjusted_mesh_axes)
+            return jax.sharding.NamedSharding(mesh, partition_spec)
     return tensor_spec
 
 def create_named_sharding(param_spec, mesh):
-    if isinstance(param_spec, PartitionSpec):
-        return NamedSharding(
+    if isinstance(param_spec, jax.sharding.PartitionSpec):
+        return jax.sharding.NamedSharding(
             mesh,
             param_spec
         )

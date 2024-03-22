@@ -279,9 +279,7 @@ class BaseLayer(Module):
     ) -> NestedTensor:
         params = {}
         param_specs = self._create_layer_parameter_specs()
-        #print(f'Para_specs = {param_specs}')
         for name, spec in param_specs.items():
-         #   print(f'Name: {name} Spec: {spec}')
             # Note: we split the key even if value is prebuilt.
             prng_key, child_key = jax.random.split(prng_key)
             value = get_or_none(prebuilt, name)

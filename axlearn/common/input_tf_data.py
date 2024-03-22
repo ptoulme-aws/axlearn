@@ -264,8 +264,8 @@ def tfds_dataset(
         shuffle_buffer_size = 0
         shuffle_files = False
 
-    shuffle_buffer_size = 0
-    shuffle_files = False
+    # shuffle_buffer_size = 0
+    # shuffle_files = False
 
     if data_dir is None:
         data_dir = get_data_dir()
@@ -358,22 +358,18 @@ def tfrecord_dataset(
         glob_files = tf.io.gfile.glob(glob_path)
         # Shuffle files to avoid deterministic loading.
         filenames = tf.data.Dataset.from_tensor_slices(glob_files)
-        """
         if is_training and shuffle_buffer_size > 0:
             filenames = filenames.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
-        """
         ds = tf.data.TFRecordDataset(
             filenames,
             compression_type=compression_type,
             num_parallel_reads=num_parallel_calls_for_read,
         )
         ds = ds.map(_decode_record)
-        """
         if shuffle_buffer_size > 0:
             # Subsequent processing may merge/split examples (e.g. for T5), so shuffle examples
             # during training before any processing.
             ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
-        """
         return ds
 
     return fn
@@ -985,10 +981,8 @@ def shuffle(shuffle_buffer_size: int) -> DatasetToDatasetFn:
     """
 
     def fn(ds: tf.data.Dataset) -> tf.data.Dataset:
-        """
         if shuffle_buffer_size > 0:
             ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
-        """
         return ds
 
     return fn
