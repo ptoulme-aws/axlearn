@@ -94,6 +94,10 @@ class SpmdTrainer(Module):
         # This is only applied if we aren't restoring from an existing checkpoint.
         init_state_builder: Optional[TrainerStateBuilder.Config] = None
 
+        # If True, initialize from cpu and then move model and learner parameters to the device
+        # Currently for neuron backend since neuron needs initialization in cpu
+        cpu_init: bool = False
+
         # The maximum number of steps.
         max_step: Union[int, float] = math.inf
 
@@ -172,6 +176,10 @@ class SpmdTrainer(Module):
         self._jit_train_step: jax.stages.Wrapped = None
         self._watchdog_stopping = None
         self._watchdog_thread = None
+
+        if jax.default_backend() == "neuron":
+            cfg.input_partition_type = DataPartitionType.DATA
+            cfg.cpu_init = True
 
         if cfg.model.dtype is None:
             raise ValueError(f"dtype must be explicitly specified for {self.path()}.model")
@@ -583,6 +591,92 @@ class SpmdTrainer(Module):
             out_shardings=(TrainerState(None, model_specs, learner_specs)),
         )
         self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+        def init_from_cpu(self, prng_key: Tensor, prebuilt_model_state: NestedTensor):
+
+            def _init_state_cpu(prng_key: Tensor, prebuilt_model_state: NestedTensor):
+                prng_key, init_key = jax.random.split(prng_key)
+
+                cpu_device = jax.devices("cpu")[0]
+                with jax.default_device(cpu_device):
+                    model_params = self.model.initialize_parameters_recursively(
+                        init_key,
+                        prebuilt=prebuilt_model_state,
+                    )
+                    learner_params = self.learner.init(self._opt_params(model_params))
+                    logging.info("CPU initialization completed.")
+                return prng_key, model_params, learner_params
+
+            def _move_state_to_neuron(prng_key: Tensor, model_params, learner_params):
+                model_params = jax.device_put(model_params)
+                learner_params = jax.device_put(learner_params)
+                self.vlog(
+                    1, "tree_structure(model_params)=%s", jax.tree_util.tree_structure(model_params)
+                )
+                return TrainerState(
+                    prng_key=prng_key,
+                    model=model_params,
+                    learner=learner_params,
+                )
+
+            def create_named_sharding_optimizer(tensor_spec, mesh):
+                zero1=True
+                if isinstance(tensor_spec, TensorSpec):
+                    if tensor_spec.mesh_axes == (None,):
+                        return jax.sharding.NamedSharding(mesh, PartitionSpec(None))
+                    else:
+                        if len(tensor_spec.mesh_axes) > len(tensor_spec.shape):
+                            adjusted_mesh_axes = tensor_spec.mesh_axes[1:]
+                        else:
+                            adjusted_mesh_axes = tensor_spec.mesh_axes
+                        if zero1:
+                            adjusted_mesh_axes = tuple('data' if axis == 'fsdp' else axis for axis in adjusted_mesh_axes)
+                        partition_spec = jax.sharding.PartitionSpec(*adjusted_mesh_axes)
+                        return jax.sharding.NamedSharding(mesh, partition_spec)
+                return tensor_spec
+
+            def create_named_sharding(param_spec, mesh):
+                if isinstance(param_spec, jax.sharding.PartitionSpec):
+                    return jax.sharding.NamedSharding(
+                        mesh,
+                        param_spec
+                    )
+                return param_spec
+            
+            model_specs = jax.tree_util.tree_map(
+                lambda value: create_named_sharding(value, self.mesh()) if isinstance(value, jax.sharding.PartitionSpec) else None,
+                self._trainer_state_partition_specs[1],
+            )
+            learner_specs = jax.tree_util.tree_map(
+                lambda value: create_named_sharding_optimizer(value, self.mesh()) if isinstance(value, TensorSpec) else None,
+                self._learner_state_partition_specs,
+            )
+            init_computation = jax.jit(
+                _move_state_to_neuron,
+                in_shardings=(None, model_specs, learner_specs),
+            )
+            self._step_log("Initializing trainer state.")
+            cpu_device = jax.devices("cpu")[0]
+            with jax.default_device(cpu_device):
+                prng_key, model_params, learner_params = _init_state_cpu(prng_key, prebuilt_model_state)
+            with self.mesh():
+                self._trainer_state = init_computation(prng_key, model_params, learner_params)
+                logging.info("Transfer to device completed.")
+                return self._trainer_state
+
+        if False and self.config.cpu_init == False:
+            logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
+            logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
+            init_computation = pjit(
+                _init_state,
+                in_shardings=(None, prebuilt_model_state_partition_spec),
+                out_shardings=self._trainer_state_partition_specs,
+            )
+            self._step_log("Initializing trainer state.")
+            with self.mesh():
+                self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+        else:
+            # neuron backend, init from cpu
+            init_from_cpu(self, prng_key, prebuilt_model_state)
 
     def _log_trainer_state_stats(self):
         total_num_params = count_model_params(self._trainer_state.model)
@@ -1005,27 +1099,3 @@ def select_mesh_config(trainer_config: SpmdTrainer.Config, *, mesh_selector: str
         logging.info("Mesh selector %s matches mesh rule %s", mesh_selector, mesh)
         if mesh is not REQUIRED:
             trainer_config.mesh_shape = mesh
-
-def create_named_sharding_optimizer(tensor_spec, mesh):
-    zero1=True
-    if isinstance(tensor_spec, TensorSpec):
-        if tensor_spec.mesh_axes == (None,):
-            return jax.sharding.NamedSharding(mesh, PartitionSpec(None))
-        else:
-            if len(tensor_spec.mesh_axes) > len(tensor_spec.shape):
-                adjusted_mesh_axes = tensor_spec.mesh_axes[1:]
-            else:
-                adjusted_mesh_axes = tensor_spec.mesh_axes
-            if zero1:
-                adjusted_mesh_axes = tuple('data' if axis == 'fsdp' else axis for axis in adjusted_mesh_axes)
-            partition_spec = jax.sharding.PartitionSpec(*adjusted_mesh_axes)
-            return jax.sharding.NamedSharding(mesh, partition_spec)
-    return tensor_spec
-
-def create_named_sharding(param_spec, mesh):
-    if isinstance(param_spec, jax.sharding.PartitionSpec):
-        return jax.sharding.NamedSharding(
-            mesh,
-            param_spec
-        )
-    return param_spec
