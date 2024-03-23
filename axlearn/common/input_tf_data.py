@@ -264,8 +264,8 @@ def tfds_dataset(
         shuffle_buffer_size = 0
         shuffle_files = False
 
-    # shuffle_buffer_size = 0
-    # shuffle_files = False
+    shuffle_buffer_size = 0
+    shuffle_files = False
 
     if data_dir is None:
         data_dir = get_data_dir()

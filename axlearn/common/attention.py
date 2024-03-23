@@ -2971,8 +2971,6 @@ def set_double_shard_weights_config(
         # Encourage the right activation sharding.
         ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
         ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
-        # ff_layer.linear1.output_partition_spec = (batch_axis_names, None, tp_axis_names)
-        # ff_layer.linear2.output_partition_spec = (batch_axis_names, None, None)
     
     if jax.default_backend() == "neuron":
         seq_axis_names = None
@@ -3580,7 +3578,7 @@ def build_remat_spec(
         policy=config_for_function(jax_remat_policies.save_only_these_names).set(
             names_which_can_be_saved=[
                 f"{attention_name}.{el}"
-                for el in ["q_proj", "k_proj", "v_proj", "context"]
+                for el in ["q_proj", "k_proj", "v_proj", "context", "o_proj"]
             ]
         ),
     )
