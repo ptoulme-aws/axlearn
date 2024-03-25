@@ -67,6 +67,8 @@ EVAL_EVERY_N_STEPS = 5_000
 # (but usually keep parameters and optimizer state in float32).
 STEP_DTYPE = jnp.bfloat16
 
+DTYPE = jnp.float32 if jax.default_backend() != "neuron" else jnp.bfloat16
+
 
 # The default mesh-axis names for LM training, from least to most communication intensive.
 # See mesh_shape_from_axes() docstring for more details.
@@ -228,8 +230,9 @@ def model_config(
         vocab_size=vocab_size,
         emb=emb_cfg,
         dropout_rate=dropout_rate,
-        lm_head=LmHead.default_config().set(dtype=jnp.bfloat16)  #bfloat16
     )
+    if jax.default_backend() == "neuron":
+        decoder_cfg.set(lm_head=LmHead.default_config().set(dtype=DTYPE))
     # Model.
     model_param_init = DefaultInitializer.default_config().set(
         init_by_param_name={
@@ -245,22 +248,27 @@ def model_config(
         batch_axis_names=batch_axis_names,
         seq_axis_names="seq",
     )
-    cfg.dtype = jnp.float32
-    if jax.default_backend() == "neuron":
-        cfg.dtype = jnp.bfloat16
+    cfg.dtype = DTYPE
+
+    tp_axis_names="model"
+    if jax.default_backend() != "neuron":
+        fsdp_axis_names=("expert", "fsdp", "seq")
+    else:
+        tp_axis_names="model"
+        fsdp_axis_names="data"
+        cfg.decoder.emb.token_emb.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
+        cfg.decoder.lm_head.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
+        #cfg.decoder.logits_partition_spec = (batch_axis_names, "seq", "model")
+
     # Shard some FFN and attention weights over multiple axes.
     set_double_shard_weights_config(
         cfg.decoder.transformer.layer,
         batch_axis_names=batch_axis_names,
-        fsdp_axis_names="data",
-        tp_axis_names="model",
+        fsdp_axis_names=fsdp_axis_names,
+        tp_axis_names=tp_axis_names,
         seq_axis_names=("seq",),
     )
-    tp_axis_names='model'
-    fsdp_axis_names='data'
-    cfg.decoder.emb.token_emb.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
-    cfg.decoder.lm_head.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
-    #cfg.decoder.logits_partition_spec = (batch_axis_names, "seq", "model")
+
     set_bias_recursively(cfg, False)
     set_norm_recursively(cfg, normalization)
     cfg.z_loss_scale = z_loss_scale
