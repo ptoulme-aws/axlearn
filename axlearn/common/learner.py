@@ -9,7 +9,8 @@
 
 import dataclasses
 import enum
-from typing import Mapping, Optional, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple, Any, NamedTuple
+# from typing import , Callable, Dict, List, , Optional, Sequence, Tuple, Union
 
 import jax
 import optax
@@ -25,7 +26,7 @@ from axlearn.common.config import (
 )
 from axlearn.common.module import Module
 from axlearn.common.optimizer_base import NestedOptParam, PartitionedGradientTransformation
-from axlearn.common.optimizers import param_ema
+from axlearn.common.optimizers import param_ema, MultiStepsState
 from axlearn.common.utils import (
     NestedPartitionSpec,
     NestedTensor,
@@ -163,7 +164,21 @@ class Learner(BaseLearner):
         self, model_param_specs: NestedParameterSpec
     ) -> NestedPartitionSpec:
         optimizer_model_param_specs = self._get_optimizer_model_params(model_param_specs)
-        partition_state = dict(optimizer=self.optimizer.partition(optimizer_model_param_specs))
+        # mystate = optax.MultiStepsState(None, None, None, None, None)
+        # dict(
+        #     optimizer=optax.MultiStepsState
+        # )
+        print("In create_state_partition_specs\n")
+
+        partition_state = dict(
+            optimizer=MultiStepsState(
+                    mini_step = None,
+                    gradient_step = None,
+                    inner_opt_state = self.optimizer.partition(optimizer_model_param_specs),
+                    acc_grads = model_param_specs)
+        )
+
+        # partition_state = dict(optimizer=self.optimizer.partition(optimizer_model_param_specs))
         if self.config.ema.decay is not None:
             partition_state["ema"] = self.ema.partition(model_param_specs)
         return partition_state
@@ -179,8 +194,25 @@ class Learner(BaseLearner):
     def init(self, model_params: NestedOptParam) -> NestedTensor:
         update_types = self._update_types(model_params)
         register_per_param_settings(update_types, description="learner_update_type")
+        print("Optimizer state init")
+
+        # print("Multistep init")
+        # tmp = self.optimizer.partition
+        # multisteps = optax.MultiSteps(self.optimizer, 2)
+        # self.optimizer = PartitionedGradientTransformation(
+        #         init=multisteps.init, update=multisteps.update, partition=tmp
+        #     )
+
+        def _copy_zero(model_tree):
+            return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
+
+        grad_model_params = self._get_optimizer_model_params(model_params)
         state = dict(
-            optimizer=self.optimizer.init(self._get_optimizer_model_params(model_params)),
+            optimizer=MultiStepsState(
+                    mini_step = jnp.zeros([], dtype=jnp.int32),
+                    gradient_step = jnp.zeros([], dtype=jnp.int32),
+                    inner_opt_state = self.optimizer.init(grad_model_params),
+                    acc_grads = _copy_zero(grad_model_params))
         )
         if self.config.ema.decay is not None:
             state["ema"] = self.ema.init(model_params)
@@ -227,11 +259,53 @@ class Learner(BaseLearner):
         """
         cfg = self.config
         optimizer_model_params = self._get_optimizer_model_params(model_params)
-        optimizer_parameter_updates, optimizer_state = self.optimizer.update(
+        print("params in self.optimizer.update", optimizer_model_params)
+        k_steps = 4
+        _acc_update = lambda x, y: x + y
+
+        # Note: we do not enclose variables to allow JAX to re-use memory buffers.
+        def _do_update(updates, state, params):
+            acc_grads = jax.tree_util.tree_map(
+                lambda upd, acc: _acc_update(upd, acc),
+                updates,
+                state.acc_grads,
+            )
+
+            final_updates, new_inner_state = self.optimizer.update(
+                acc_grads, state.inner_opt_state, params=params
+            )
+
+            emit = state.mini_step == (k_steps - 1)
+            new_state = MultiStepsState(
+                mini_step=optax.safe_int32_increment(state.mini_step) % k_steps,
+                gradient_step=emit
+                * optax.safe_int32_increment(state.gradient_step)
+                + (1 - emit) * state.gradient_step,
+                inner_opt_state=jax.tree_util.tree_map(
+                    lambda st, nst: jnp.where(emit, nst, st),
+                    state.inner_opt_state,
+                    new_inner_state,
+                ),
+                acc_grads=jax.tree_util.tree_map(
+                    lambda ga: (1 - emit) * ga, acc_grads
+                ),
+            )
+
+            final_updates = jax.tree_util.tree_map(
+                lambda ga: emit * ga, final_updates
+            )
+            return final_updates, new_state
+
+        optimizer_parameter_updates, optimizer_state = _do_update(
             gradients,
             state=self.state["optimizer"],
             params=optimizer_model_params,
         )
+        # optimizer_parameter_updates, optimizer_state = self.optimizer.update(
+        #     gradients,
+        #     state=self.state["optimizer"],
+        #     params=optimizer_model_params,
+        # )
         self.add_state_update("optimizer", optimizer_state)
         if cfg.enable_per_variable_summaries:
             param_rms = jax.tree_util.tree_map(

@@ -113,7 +113,8 @@ def with_partition_fn(
     def update_fn(
         updates: optax.Updates, state: optax.OptState, params: NestedOptParam
     ) -> Tuple[optax.Updates, optax.OptState]:
-        return base.update(updates, state, opt_param_values(params))
+        print("params in update_fn", params)
+        return base.update(updates, state, opt_param_values(params)) # TODO: apoorvgu params wrong here
 
     return PartitionedGradientTransformation(init=init_fn, update=update_fn, partition=partition_fn)
 
@@ -684,6 +685,8 @@ def adamw_decoupled_optimizer(
         A PartitionedGradientTransformation representing a decoupled AdamW optimizer with
             parameter scaling.
     """
+    # optax.MultiSteps(optimizer, every_k_schedule=3)
+    # tx = [adam_partition(optax.MultiSteps(optax.scale_by_adam(b1=b1, b2=b2, eps=eps, mu_dtype=mu_dtype), every_k_schedule=2))]
     tx = [adam_partition(optax.scale_by_adam(b1=b1, b2=b2, eps=eps, mu_dtype=mu_dtype))]
     if adam_update_transformation is not None:
         tx.append(maybe_instantiate(adam_update_transformation))
@@ -704,6 +707,13 @@ def adamw_decoupled_optimizer(
     )
 
     return chain(*tx)
+
+
+class MultiStepsState(NamedTuple):
+    mini_step: int
+    gradient_step: int
+    inner_opt_state: Any
+    acc_grads: Any
 
 
 def adam_optimizer(
@@ -1521,7 +1531,7 @@ def adastar_optimizer(
             )
 
         return _AdastarState(
-            count=jnp.zeros([], dtype=jnp.int32), pps=jax.tree_util.tree_map(_init, params)
+            count=jnp.zeros([], jnp.int32), pps=jax.tree_util.tree_map(_init, params)
         )
 
     def update_fn(grads: NestedTensor, state: _AdastarState, params: NestedOptParam):
