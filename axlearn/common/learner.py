@@ -9,8 +9,7 @@
 
 import dataclasses
 import enum
-from typing import Mapping, Optional, Sequence, Tuple, Any, NamedTuple
-# from typing import , Callable, Dict, List, , Optional, Sequence, Tuple, Union
+from typing import Mapping, Optional, Sequence, Tuple
 
 import jax
 import optax
@@ -164,7 +163,7 @@ class Learner(BaseLearner):
         self, model_param_specs: NestedParameterSpec
     ) -> NestedPartitionSpec:
         optimizer_model_param_specs = self._get_optimizer_model_params(model_param_specs)
-        partition_state = self.optimizer.partition(optimizer_model_param_specs)
+        partition_state = dict(optimizer=self.optimizer.partition(optimizer_model_param_specs))
         if self.config.ema.decay is not None:
             partition_state["ema"] = self.ema.partition(model_param_specs)
         return partition_state
@@ -180,8 +179,9 @@ class Learner(BaseLearner):
     def init(self, model_params: NestedOptParam) -> NestedTensor:
         update_types = self._update_types(model_params)
         register_per_param_settings(update_types, description="learner_update_type")
-        grad_model_params = self._get_optimizer_model_params(model_params)
-        state = self.optimizer.init(grad_model_params)
+        state = dict(
+            optimizer=self.optimizer.init(self._get_optimizer_model_params(model_params)),
+        )
         if self.config.ema.decay is not None:
             state["ema"] = self.ema.init(model_params)
         return state

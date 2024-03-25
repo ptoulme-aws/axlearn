@@ -685,8 +685,6 @@ def adamw_decoupled_optimizer(
         A PartitionedGradientTransformation representing a decoupled AdamW optimizer with
             parameter scaling.
     """
-    # optax.MultiSteps(optimizer, every_k_schedule=3)
-    # tx = [adam_partition(optax.MultiSteps(optax.scale_by_adam(b1=b1, b2=b2, eps=eps, mu_dtype=mu_dtype), every_k_schedule=2))]
     tx = [adam_partition(optax.scale_by_adam(b1=b1, b2=b2, eps=eps, mu_dtype=mu_dtype))]
     if adam_update_transformation is not None:
         tx.append(maybe_instantiate(adam_update_transformation))
@@ -1593,7 +1591,7 @@ def adastar_optimizer(
             )
 
         return _AdastarState(
-            count=jnp.zeros([], jnp.int32), pps=jax.tree_util.tree_map(_init, params)
+            count=jnp.zeros((1,), dtype=jnp.int32), pps=jax.tree_util.tree_map(_init, params)
         )
 
     def update_fn(grads: NestedTensor, state: _AdastarState, params: NestedOptParam):
