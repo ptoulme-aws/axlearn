@@ -708,22 +708,10 @@ def adamw_decoupled_optimizer(
 
     return chain(*tx)
 
-# def chain(*args):
-#     args = [_to_partitioned_transformation(e) for e in args]
-#     base = optax.chain(*[optax.GradientTransformation(init=e.init, update=e.update) for e in args])
-
-#     def partition(param_spec):
-#         return tuple(e.partition(param_spec) for e in args)
-
-#     return PartitionedGradientTransformation(
-#         init=base.init, update=base.update, partition=partition
-#     )
-
 def multisteps_optimizer(
-    *args
+    *args, k_steps
 ) -> PartitionedGradientTransformation:
     base = chain(*args)
-    k_steps = 4
 
     class MultiStepsState(NamedTuple):
         mini_step: int
@@ -734,16 +722,13 @@ def multisteps_optimizer(
     def multisteps_init(model_params):
         def _copy_zero(model_tree):
             return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
-        state = dict(
+        return dict(
             optimizer=MultiStepsState(
                     mini_step = jnp.zeros([], dtype=jnp.int32),
                     gradient_step = jnp.zeros([], dtype=jnp.int32),
                     inner_opt_state = base.init(model_params),
                     acc_grads = _copy_zero(model_params))
         )
-        print("Inside multisteps_init state type is", type(state))
-
-        return state
 
     def multisteps_partition(optimizer_model_param_specs):
         return dict(
@@ -792,90 +777,6 @@ def multisteps_optimizer(
     return PartitionedGradientTransformation(
         init=multisteps_init, update=multisteps_update, partition=multisteps_partition
     )
-# def multisteps_optimizer(
-#     learning_rate: float,
-#     *,
-#     b1: float,
-#     b2: float,
-#     eps: float,
-#     update_schedule: schedule.Schedule,
-#     k_steps: int,
-#     weight_decay: float = 0,
-#     weight_decay_per_param_scale: Optional[Callable[[NestedOptParam], Any]] = None,
-#     mu_dtype: Optional[jnp.dtype] = None,
-#     adam_update_transformation: Optional[ConfigOr[PartitionedGradientTransformation]] = None,
-# ) -> PartitionedGradientTransformation:
-#     breakpoint()
-    
-#     chained_transformations = adamw_decoupled_optimizer(learning_rate=learning_rate, b1=b1, b2=b2,eps=eps,update_schedule=update_schedule, weight_decay=weight_decay, weight_decay_per_param_scale=weight_decay_per_param_scale,adam_update_transformation=adam_update_transformation,mu_dtype=mu_dtype)
-
-#     class MultiStepsState(NamedTuple):
-#         mini_step: int
-#         gradient_step: int
-#         inner_opt_state: Any
-#         acc_grads: Any
-
-#     def multisteps_init(model_params):
-#         def _copy_zero(model_tree):
-#             return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
-#         state = dict(
-#             optimizer=MultiStepsState(
-#                     mini_step = jnp.zeros([], dtype=jnp.int32),
-#                     gradient_step = jnp.zeros([], dtype=jnp.int32),
-#                     inner_opt_state = chained_transformations.init(model_params),
-#                     acc_grads = _copy_zero(model_params))
-#         )
-#         print("Inside multisteps_init state type is", type(state))
-
-#         return state
-
-#     def multisteps_partition(optimizer_model_param_specs):
-#         return dict(
-#             optimizer=MultiStepsState(
-#                     mini_step = None,
-#                     gradient_step = None,
-#                     inner_opt_state = chained_transformations.partition(optimizer_model_param_specs),
-#                     acc_grads = optimizer_model_param_specs) # TODO: check if this works was model_param_specs
-#         )
-
-#     # Copied from Optax Multistep
-#     def multisteps_update(updates, state, params):
-#         _acc_update = lambda x, y: x + y
-#         # Note: we do not enclose variables to allow JAX to re-use memory buffers.
-#         acc_grads = jax.tree_util.tree_map(
-#             lambda upd, acc: _acc_update(upd, acc),
-#             updates,
-#             state.acc_grads,
-#         )
-
-#         final_updates, new_inner_state = chained_transformations.update(
-#             acc_grads, state.inner_opt_state, params=params
-#         )
-
-#         emit = state.mini_step == (k_steps - 1)
-#         new_state = MultiStepsState(
-#             mini_step=optax.safe_int32_increment(state.mini_step) % k_steps,
-#             gradient_step=emit
-#             * optax.safe_int32_increment(state.gradient_step)
-#             + (1 - emit) * state.gradient_step,
-#             inner_opt_state=jax.tree_util.tree_map(
-#                 lambda st, nst: jnp.where(emit, nst, st),
-#                 state.inner_opt_state,
-#                 new_inner_state,
-#             ),
-#             acc_grads=jax.tree_util.tree_map(
-#                 lambda ga: (1 - emit) * ga, acc_grads
-#             ),
-#         )
-
-#         final_updates = jax.tree_util.tree_map(
-#             lambda ga: emit * ga, final_updates
-#         )
-#         return final_updates, new_state
-
-#     return PartitionedGradientTransformation(
-#         init=multisteps_init, update=multisteps_update, partition=multisteps_partition
-#     )
 
 def adam_optimizer(
     learning_rate: schedule.Schedule,

@@ -296,13 +296,13 @@ def learner_config(
                 b2=b2,
                 eps=eps,
                 update_schedule=update_schedule,
-                # k_steps=4,
                 weight_decay=weight_decay,
                 weight_decay_per_param_scale=None,
                 adam_update_transformation=None,
                 mu_dtype=jnp.float32
             ),
-        ]
+        ],
+        k_steps=4
     )
     return learner.Learner.default_config().set(optimizer=optimizer_cfg)
 
