@@ -719,22 +719,18 @@ def multisteps_optimizer(
     def multisteps_init(model_params):
         def _copy_zero(model_tree):
             return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
-        return dict(
-            optimizer=MultiStepsState(
+        return MultiStepsState(
                     mini_step = jnp.zeros([], dtype=jnp.int32),
                     gradient_step = jnp.zeros([], dtype=jnp.int32),
                     inner_opt_state = base.init(model_params),
                     acc_grads = _copy_zero(model_params))
-        )
 
     def multisteps_partition(optimizer_model_param_specs):
-        return dict(
-            optimizer=MultiStepsState(
+        return MultiStepsState(
                     mini_step = None,
                     gradient_step = None,
                     inner_opt_state = base.partition(optimizer_model_param_specs),
                     acc_grads = optimizer_model_param_specs) # TODO: check if this works was model_param_specs
-        )
 
     # Copied from Optax Multistep
     def multisteps_update(updates, state, params):
