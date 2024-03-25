@@ -284,7 +284,10 @@ def learner_config(
         # Decay to this fraction of the peak_lr.
         alpha=alpha,
     )
-    optimizer_cfg = config_for_function(optimizers.chain).set(
+    # Change the optimizer requirement to optimizer multisteps instead of chain, 
+    # this can be done through a config file change also by changing key-value pair:
+    # learner.optimizer.fn: 'axlearn.common.optimizers.chain'
+    optimizer_cfg = config_for_function(optimizers.multisteps_optimizer).set(
         args=[
             config_for_function(optimizers.clip_by_global_norm).set(max_norm=1),
             config_for_function(optimizers.adamw_decoupled_optimizer).set(
@@ -293,6 +296,7 @@ def learner_config(
                 b2=b2,
                 eps=eps,
                 update_schedule=update_schedule,
+                # k_steps=4,
                 weight_decay=weight_decay,
                 weight_decay_per_param_scale=None,
                 adam_update_transformation=None,
