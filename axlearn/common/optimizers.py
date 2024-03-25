@@ -113,8 +113,7 @@ def with_partition_fn(
     def update_fn(
         updates: optax.Updates, state: optax.OptState, params: NestedOptParam
     ) -> Tuple[optax.Updates, optax.OptState]:
-        print("params in update_fn", params)
-        return base.update(updates, state, opt_param_values(params)) # TODO: apoorvgu params wrong here
+        return base.update(updates, state, opt_param_values(params))
 
     return PartitionedGradientTransformation(init=init_fn, update=update_fn, partition=partition_fn)
 
@@ -443,7 +442,7 @@ def add_decayed_weights(
             count = None
         else:
             count = jnp.zeros([], jnp.int32)
-        return AddDecayedWeightsState(count=count)
+        return AddDecayedWeightsState(count=jnp.zeros((1,), dtype=jnp.int32))
 
     def update_fn(updates: NestedTensor, state: AddDecayedWeightsState, params: NestedOptParam):
         if params is None:
