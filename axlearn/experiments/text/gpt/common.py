@@ -478,7 +478,7 @@ def get_trainer_config_fn(
     evalers: Dict[str, SpmdEvaler.Config],
     mesh_axis_names: Sequence[str] = MESH_AXIS_NAMES,
     mesh_rules: Optional[Sequence[Tuple[str, Optional[MeshShape]]]] = None,
-    eval_every_n_steps: int = 5000,
+    eval_every_n_steps: int = 50000,
     eval_batch_size: Optional[int] = None,
     keep_every_n_steps: int = 50_000,
     save_every_n_steps: Optional[int] = None,
