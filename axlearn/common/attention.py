@@ -1105,7 +1105,14 @@ def apply_rotary_position_embeddings(
         Rotary position affined value embeddings with shape [batch_size, seq_len, num_heads, dim]
             if rotary_value == True, else original value embeddings
     """
-    return query, key, value # neuron skips this for now until fixed
+    def _rotate_half(x: jnp.ndarray) -> jnp.ndarray:
+        reshaped = jnp.reshape(x, (*x.shape[:-1], -1, 2))
+        flipped = jnp.flip(reshaped, axis=-1)
+        negate_const = jnp.array([-1.0, 1.0])
+        negated = flipped * negate_const
+        rotated = jnp.reshape(negated, key.shape)
+        return rotated
+
     # sin [batch_size, num_heads, sequence_length, embed_size_per_head//2]
     # cos [batch_size, num_heads, sequence_length, embed_size_per_head//2]
     sin, cos = jnp.split(sinusoidal_pos, 2, axis=-1)
@@ -1114,18 +1121,14 @@ def apply_rotary_position_embeddings(
     # cos [θ0,θ1,θ2......θd/2-1] -> cos_pos [θ0,θ0,θ1,θ1,θ2,θ2......θd/2-1,θd/2-1]
     cos_pos = jnp.reshape(jnp.stack([cos, cos], axis=-1), sinusoidal_pos.shape)
     # rotate_half_query_layer [-q1,q0,-q3,q2......,-qd-1,qd-2]
-    rotate_half_query = jnp.reshape(
-        jnp.stack([-query[..., 1::2], query[..., ::2]], axis=-1), query.shape
-    )
+    rotate_half_query = _rotate_half(query)
     query = query * cos_pos + rotate_half_query * sin_pos
     # rotate_half_key_layer [-k1,k0,-k3,k2......,-kd-1,kd-2]
-    rotate_half_key = jnp.reshape(jnp.stack([-key[..., 1::2], key[..., ::2]], axis=-1), key.shape)
+    rotate_half_key = _rotate_half(key)
     key = key * cos_pos + rotate_half_key * sin_pos
     if rotary_value:
         # rotate_half_value_layer [-v1,v0,-v3,v2......,-vd-1,vd-2]
-        rotate_half_value = jnp.reshape(
-            jnp.stack([-value[..., 1::2], value[..., ::2]], axis=-1), value.shape
-        )
+        rotate_half_value = _rotate_half(value)
         value = value * cos_pos + rotate_half_value * sin_pos
     return query, key, value
 
