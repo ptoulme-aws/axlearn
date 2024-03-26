@@ -13,6 +13,7 @@ See c4_trainer.py for how they are used.
 import math
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
+import jax
 import jax.numpy as jnp
 import tensorflow as tf
 
@@ -245,12 +246,23 @@ def model_config(
         seq_axis_names="seq",
     )
     cfg.dtype = jnp.bfloat16
+
+    tp_axis_names="model"
+    if jax.default_backend() != "neuron":
+        fsdp_axis_names=("expert", "fsdp", "seq")
+    else:
+        tp_axis_names="model"
+        fsdp_axis_names="data"
+        cfg.decoder.emb.token_emb.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
+        cfg.decoder.lm_head.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
+        #cfg.decoder.logits_partition_spec = (batch_axis_names, "seq", "model")
+
     # Shard some FFN and attention weights over multiple axes.
     set_double_shard_weights_config(
         cfg.decoder.transformer.layer,
         batch_axis_names=batch_axis_names,
-        fsdp_axis_names="data",
-        tp_axis_names="model",
+        fsdp_axis_names=fsdp_axis_names,
+        tp_axis_names=tp_axis_names,
         seq_axis_names=("seq",),
     )
     tp_axis_names='model'
