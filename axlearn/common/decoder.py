@@ -92,7 +92,7 @@ def _segment_ids_from_causal_input_ids(input_ids: Tensor, *, pad_token_id: int) 
     non_pad_indicator = (input_ids != pad_token_id).astype(input_ids.dtype)
     non_pad_count = jnp.sum(
         # Note: jax.lax.cummax doesn't support axis=-1.
-        jax.lax.cummax(non_pad_indicator, axis=input_ids.ndim - 1, reverse=True), # ptoulme this line causes compiler failures
+        jax.lax.cummax(non_pad_indicator, axis=input_ids.ndim - 1, reverse=True),
         axis=-1,
     )
     return jnp.arange(input_ids.shape[-1]) < non_pad_count[:, None]
@@ -660,7 +660,7 @@ class Decoder(DecodingMixin, BaseLayer):
         self,
         input_ids: Tensor,
         *,
-        segment_ids: Optional[Tensor] = None, # ptoulme this is sequence packing and breaks Neuron
+        segment_ids: Optional[Tensor] = None,
         positions: Optional[Tensor] = None,
     ) -> Optional[Tensor]:
         """Produces self-attention logit biases.
@@ -717,7 +717,7 @@ class LmHead(BaseLayer):
         cfg = self.config
         return dict(
             weight=ParameterSpec(
-                shape=(cfg.vocab_size, cfg.embedding_dim),  # ptoulme - storing the weight this way causes an extra transpose?
+                shape=(cfg.vocab_size, cfg.embedding_dim),
                 mesh_axes=cfg.param_partition_spec,
             )
         )

@@ -1,5 +1,5 @@
 #! /bin/bash
-source /shared_new/ptoulme/axlearn/venv/bin/activate
+source /shared_new/mengchiy/axlearn_new/venv/bin/activate
 source ./setup.sh
 source ./train_setup.sh
 

@@ -38,12 +38,12 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
         print(f'DP_DEGREE {DP_DEGREE}')
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=32,
+                num_layers=4,
                 hidden_dim=4096,
                 #ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=32,
-                vocab_size=32000,
+                vocab_size=8000,
             ),
             learner_kwargs=dict(
                 peak_lr=6e-4,

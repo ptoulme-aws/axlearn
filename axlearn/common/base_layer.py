@@ -256,7 +256,7 @@ class BaseLayer(Module):
             if partition_spec is None:
                 # Replicate along all axes.
                 partition_spec = [None] * len(param_spec.shape)
-            if False and len(partition_spec) != len(param_spec.shape): # Fused QKV shape here does not have the 3
+            if len(partition_spec) != len(param_spec.shape):
                 raise ValueError(
                     f"partition_spec {partition_spec} must have the same length as "
                     f"shape {param_spec.shape})"
@@ -279,9 +279,7 @@ class BaseLayer(Module):
     ) -> NestedTensor:
         params = {}
         param_specs = self._create_layer_parameter_specs()
-        #print(f'Para_specs = {param_specs}')
         for name, spec in param_specs.items():
-         #   print(f'Name: {name} Spec: {spec}')
             # Note: we split the key even if value is prebuilt.
             prng_key, child_key = jax.random.split(prng_key)
             value = get_or_none(prebuilt, name)
