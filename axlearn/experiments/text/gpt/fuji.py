@@ -18,11 +18,13 @@ from axlearn.common.attention import (
     StackedTransformerLayer
 )
 from axlearn.common.utils import DataPartitionType
-from axlearn.common.embedding import TransformerTextEmbeddings
-from axlearn.common.layers import RMSNorm
+from axlearn.common.embedding import TransformerTextEmbeddingsWithSharding
+from axlearn.common.layers import RMSNormWithSharding
 from axlearn.experiments.text.gpt.common import STEP_DTYPE, learner_config, mesh_shape_from_axes
 from axlearn.experiments.text.gpt.common import model_config as common_model_config
 from axlearn.experiments.text.gpt.common import scaled_hidden_dim
+
+from jax.sharding import PartitionSpec
 
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
@@ -128,9 +130,19 @@ def model_config(
         stack_cfg=StackedTransformerLayer.default_config(), # Repeated transformer layer breaks Neuron
         activation_fn=activation_fn,
         ffn_dim=ffn_dim,
-        normalization=RMSNorm.default_config().set(eps=1e-5, forward_dtype=None),
+        normalization=RMSNormWithSharding.default_config().set(
+            eps=1e-5, 
+            forward_dtype=None, 
+            in_sharding=PartitionSpec('data', 'model', None), 
+            out_sharding=PartitionSpec('data', None, None),
+            ),
         dropout_rate=dropout_rate,
-        emb_cfg=TransformerTextEmbeddings.default_config().set(pos_emb=None),
+        emb_cfg=TransformerTextEmbeddingsWithSharding.default_config().set(
+            pos_emb=None,
+            in_sharding=PartitionSpec('data', None),
+            emb_sharding=PartitionSpec('model', None),
+            out_sharding=PartitionSpec('data', None, None)
+        ),
         attention_mask=CausalAttentionLogitBiasLayer.default_config(),
         # RoPE embeddings: https://arxiv.org/abs/2104.09864.
         attention_qkv_linear=RoFormerQKVLinear.default_config().set(

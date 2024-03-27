@@ -4,10 +4,11 @@
 from typing import Optional
 
 from jax import numpy as jnp
+from jax.sharding import PartitionSpec
 
 from axlearn.common.base_layer import BaseLayer
 from axlearn.common.config import REQUIRED, InstantiableConfig, Required, config_class
-from axlearn.common.layers import Dropout, Embedding
+from axlearn.common.layers import Dropout, Embedding, EmbeddingWithSharding
 from axlearn.common.module import Module, Tensor, child_context
 
 
@@ -93,3 +94,30 @@ class TransformerTextEmbeddings(BaseLayer):
                 return logits
             cap = jnp.array(cfg.soft_cap_logits, dtype=logits.dtype)
             return cap * jnp.tanh(logits / cap)
+
+class TransformerTextEmbeddingsWithSharding(TransformerTextEmbeddings):
+    @config_class
+    class Config(TransformerTextEmbeddings.Config):
+        """Configures TransformerTextEmbeddingsWithSharding."""
+        in_sharding: PartitionSpec = None
+        emb_sharding: PartitionSpec = None
+        out_sharding: PartitionSpec = None
+        token_emb: InstantiableConfig = EmbeddingWithSharding.default_config()  # Input embedding lookup.
+
+    def __init__(self, cfg: Config, *, parent: Optional[Module]):
+        super(TransformerTextEmbeddings, self).__init__(cfg, parent=parent)
+        cfg = self.config
+        self._add_child("token_emb", cfg.token_emb.set(
+            dim=cfg.dim,
+            num_embeddings=cfg.vocab_size,
+            in_sharding=cfg.in_sharding,
+            emb_sharding=cfg.emb_sharding,
+            out_sharding=cfg.out_sharding
+        ))
+        if cfg.type_emb is not None:
+            self._add_child("type_emb", cfg.type_emb.set(dim=cfg.dim))
+        if cfg.pos_emb is not None:
+            self._add_child("pos_emb", cfg.pos_emb.set(dim=cfg.dim))
+        if cfg.norm is not None:
+            self._add_child("norm", cfg.norm.set(input_dim=cfg.dim))
+        self._add_child("dropout", cfg.dropout)
