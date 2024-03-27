@@ -109,7 +109,7 @@ class OutputCollection(NamedTuple):
         if not re.fullmatch("^[a-z][a-z0-9_]*$", name):
             raise ValueError(f'Invalid child name "{name}"')
         if name in self:
-            raise OutputConflictError(f"{name} already present") # ptoulme hitting issues here
+            raise OutputConflictError(f"{name} already present")
         child = new_output_collection()
         self.summaries[name] = child.summaries
         self.state_updates[name] = child.state_updates
