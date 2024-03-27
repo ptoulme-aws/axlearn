@@ -2955,6 +2955,9 @@ def set_double_shard_weights_config(
         seq_axis_names: Axis name(s) over which we shard sequence-parallel tensors.
     """
 
+    if jax.default_backend() == "neuron":
+        seq_axis_names = None
+
     # pytype: disable=attribute-error
     def set_attn_partition_specs(attn_layer: MultiheadAttention.Config):
         # Shard weights.
@@ -2973,9 +2976,6 @@ def set_double_shard_weights_config(
         # ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
         ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
         ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, None)
-
-    if jax.default_backend() == "neuron":
-        seq_axis_names = None
         
     if not isinstance(cfg, Sequence):
         cfg = [cfg]
