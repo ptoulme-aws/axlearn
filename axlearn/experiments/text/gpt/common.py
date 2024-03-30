@@ -276,6 +276,7 @@ def learner_config(
     eps: float = 1e-8,
 ) -> learner.Learner.Config:
     """Build learner using the AdamW optimizer and a cosine lr schedule with linear warmup."""
+    assert max_step > lr_warmup_steps
     update_schedule = config_for_function(schedule.cosine_with_linear_warmup).set(
         peak_lr=1.0,
         max_step=max_step,
