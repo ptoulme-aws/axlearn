@@ -276,6 +276,7 @@ def learner_config(
     eps: float = 1e-8,
 ) -> learner.Learner.Config:
     """Build learner using the AdamW optimizer and a cosine lr schedule with linear warmup."""
+    assert max_step > lr_warmup_steps
     update_schedule = config_for_function(schedule.cosine_with_linear_warmup).set(
         peak_lr=1.0,
         max_step=max_step,
@@ -482,7 +483,7 @@ def get_trainer_config_fn(
     evalers: Dict[str, SpmdEvaler.Config],
     mesh_axis_names: Sequence[str] = MESH_AXIS_NAMES,
     mesh_rules: Optional[Sequence[Tuple[str, Optional[MeshShape]]]] = None,
-    eval_every_n_steps: int = 5000,
+    eval_every_n_steps: int = 50000,
     eval_batch_size: Optional[int] = None,
     keep_every_n_steps: int = 50_000,
     save_every_n_steps: Optional[int] = None,
