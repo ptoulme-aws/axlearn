@@ -906,10 +906,10 @@ class SpmdTrainer(Module):
 
         grad_buffer = jax.tree_map(lambda x: jnp.full_like(x, 0), self._trainer_state.model)
         for i in range(num_microbatches):
-            grad_buffer, forward_output_collection, microbatch_metrics = self.jit_train_step_ga(self._trainer_state, split_batches[i], grad_buffer)
+            grad_buffer, forward_output_collection, microbatch_metrics, return_key = self.jit_train_step_ga(self._trainer_state, split_batches[i], grad_buffer)
             metrics = append_metrics(metrics, microbatch_metrics)
 
-        self._trainer_state, outputs = self.jit_opt_step_ga(self._trainer_state, forward_output_collection, grad_buffer)
+        self._trainer_state, outputs = self.jit_opt_step_ga(self._trainer_state, forward_output_collection, grad_buffer, return_key)
         metrics.update(summaries=outputs)
 
         return self._trainer_state, metrics
@@ -998,17 +998,18 @@ class SpmdTrainer(Module):
         )
 
         grad_buffer = jax.tree_map(lambda x, y: x + y, grads, grad_buffer)
-        return grad_buffer, forward_output_collection, metrics
+        return grad_buffer, forward_output_collection, metrics, return_key
 
     def _opt_step_ga(
         self,
         state: TrainerState,
         forward_output_collection,
-        grads
+        grads,
+        prng_key,
     ) -> Tuple[TrainerState, NestedTensor]:
 
-        new_prng_key, learner_key, return_key = jax.random.split(
-            state.prng_key, 3
+        new_prng_key, learner_key = jax.random.split(
+            prng_key, 2
         )
 
         opt_params = self._opt_params(state.model)
