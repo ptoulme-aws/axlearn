@@ -35,6 +35,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     if model_size == "test":
         TP_DEGREE = 2
         DP_DEGREE = (8)//TP_DEGREE
+        GRADIENT_ACCUM_STEPS = 4
         print(f'DP_DEGREE {DP_DEGREE}')
         trainer_kwargs = dict(
             model_kwargs=dict(
@@ -51,9 +52,9 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
             ),
             input_partition_type=DataPartitionType.DATA,
             max_sequence_length=512,
-            train_batch_size=DP_DEGREE * 4,
+            train_batch_size=DP_DEGREE * GRADIENT_ACCUM_STEPS,
             max_step=20000,
-            gradient_accumulation_steps=4,
+            gradient_accumulation_microbatches=GRADIENT_ACCUM_STEPS,
             mesh_shape=mesh_shape_from_axes(data=DP_DEGREE, model=TP_DEGREE),
         )
     elif model_size == "7B":

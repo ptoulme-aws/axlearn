@@ -167,7 +167,8 @@ class SpmdTrainer(Module):
         # increment within this interval.
         watchdog_timeout_seconds: Optional[float] = None
 
-        gradient_accumulation_steps: Optional[int] = 1
+        # Microbatches for gradient accumulation
+        gradient_accumulation_microbatches: Optional[int] = 1
 
     def __init__(
         self,
@@ -662,7 +663,7 @@ class SpmdTrainer(Module):
             self._step_log("Already reached max_step=%s. Stopping", cfg.max_step)
             return False
 
-        if self.config.gradient_accumulation_steps > 1:
+        if self.config.gradient_accumulation_microbatches > 1:
             self._jit_train_step = self._pjit_train_step_ga()
         else:
             self._jit_train_step = self._pjit_train_step()
@@ -876,7 +877,7 @@ class SpmdTrainer(Module):
                     aux=None,
                 ),
             ),
-            donate_argnums=(0,),  # donate the state
+            donate_argnums=(0,),
         )
 
     def train_step_ga(
@@ -886,7 +887,7 @@ class SpmdTrainer(Module):
     ) -> Tuple[TrainerState, NestedTensor]:
         grad_buffer = None
         metrics = {}
-        num_microbatches = self.config.gradient_accumulation_steps
+        num_microbatches = self.config.gradient_accumulation_microbatches
 
         # divide global batches into equal microbatches for accumulation
         split_batches = [{} for _ in range(num_microbatches)]
