@@ -34,9 +34,9 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     # pylint: disable=use-dict-literal
     if model_size == "test":
         TP_DEGREE = 8
-        LAYERS = 4
+        LAYERS = 4 
         GRADIENT_ACCUM_STEPS = 4
-        DP_DEGREE = (int(os.getenv('SLURM_JOB_NUM_NODES'))*8)//TP_DEGREE
+        DP_DEGREE = (int(os.getenv('SLURM_JOB_NUM_NODES'))*32)//TP_DEGREE
         print(f'LAYERS {LAYERS}')
         print(f'DP_DEGREE {DP_DEGREE}')
         print(f'GRADIENT_ACCUM_STEPS {GRADIENT_ACCUM_STEPS}')
