@@ -66,7 +66,6 @@ EVAL_EVERY_N_STEPS = 5_000
 # (but usually keep parameters and optimizer state in float32).
 STEP_DTYPE = jnp.bfloat16
 
-
 # The default mesh-axis names for LM training, from least to most communication intensive.
 # See mesh_shape_from_axes() docstring for more details.
 MESH_AXIS_NAMES = ("data", "expert", "fsdp", "seq", "model")
@@ -245,6 +244,7 @@ def model_config(
         seq_axis_names="seq",
     )
     cfg.dtype = jnp.bfloat16
+    #cfg.dtype = jnp.float32
     # Shard some FFN and attention weights over multiple axes.
     set_double_shard_weights_config(
         cfg.decoder.transformer.layer,
@@ -288,6 +288,7 @@ def learner_config(
     # Change the optimizer requirement to optimizer multisteps instead of chain, 
     # this can be done through a config file change also by changing key-value pair:
     # learner.optimizer.fn: 'axlearn.common.optimizers.chain'
+    """
     optimizer_cfg = config_for_function(optimizers.multisteps_optimizer).set(
         args=[
             config_for_function(optimizers.clip_by_global_norm).set(max_norm=1),
@@ -304,6 +305,23 @@ def learner_config(
             ),
         ],
         k_steps=4
+    )
+    """
+    optimizer_cfg = config_for_function(optimizers.chain).set(
+        args=[
+            config_for_function(optimizers.clip_by_global_norm).set(max_norm=1),
+            config_for_function(optimizers.adamw_decoupled_optimizer).set(
+                learning_rate=peak_lr,
+                b1=b1,
+                b2=b2,
+                eps=eps,
+                update_schedule=update_schedule,
+                weight_decay=weight_decay,
+                weight_decay_per_param_scale=None,
+                adam_update_transformation=None,
+                #mu_dtype=jnp.float32
+            ),
+        ]
     )
     return learner.Learner.default_config().set(optimizer=optimizer_cfg)
 
@@ -483,7 +501,7 @@ def get_trainer_config_fn(
     evalers: Dict[str, SpmdEvaler.Config],
     mesh_axis_names: Sequence[str] = MESH_AXIS_NAMES,
     mesh_rules: Optional[Sequence[Tuple[str, Optional[MeshShape]]]] = None,
-    eval_every_n_steps: int = 50000,
+    eval_every_n_steps: int = 50_000,
     eval_batch_size: Optional[int] = None,
     keep_every_n_steps: int = 50_000,
     save_every_n_steps: Optional[int] = None,
@@ -542,7 +560,7 @@ def get_trainer_config_fn(
             cfg.evalers[name] = evaler_cfg
         # Summaries and checkpoints.
         cfg.checkpointer.save_policy = config_for_function(every_n_steps_policy).set(
-            n=save_every_n_steps or min(eval_every_n_steps, 5_000)
+            n=save_every_n_steps or min(eval_every_n_steps, 5000)
         )
         cfg.checkpointer.keep_every_n_steps = min(max_step, keep_every_n_steps)
         cfg.checkpointer.keep_last_n = 3
