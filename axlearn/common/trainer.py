@@ -167,6 +167,9 @@ class SpmdTrainer(Module):
         # increment within this interval.
         watchdog_timeout_seconds: Optional[float] = None
 
+        # Microbatches for gradient accumulation
+        gradient_accumulation_microbatches: Optional[int] = 1
+
     def __init__(
         self,
         cfg: Config,
@@ -660,7 +663,10 @@ class SpmdTrainer(Module):
             self._step_log("Already reached max_step=%s. Stopping", cfg.max_step)
             return False
 
-        self._jit_train_step = self._pjit_train_step()
+        if self.config.gradient_accumulation_microbatches > 1:
+            self._jit_train_step = self._pjit_train_step_ga()
+        else:
+            self._jit_train_step = self._pjit_train_step()
         return True
 
     def restore_checkpoint(self, restore_step: Optional[int] = None) -> Optional[int]:
@@ -834,6 +840,28 @@ class SpmdTrainer(Module):
             evaler_summaries[evaler_name] = summaries
         return evaler_summaries
 
+    def _pjit_train_step_ga(self) -> jax.stages.Wrapped:
+        self.jit_train_step_ga = pjit(
+            self._train_step_ga,
+            in_shardings=(
+                self._trainer_state_partition_specs,
+                self._train_step_input_partition_specs(),
+                self._trainer_state_partition_specs.model,
+            ),
+        )
+        self.jit_opt_step_ga = pjit(
+            self._opt_step_ga,
+            out_shardings=(
+                self._trainer_state_partition_specs,
+                dict(
+                    model=None,
+                    learner=None,
+                ),
+            ),
+        )
+
+        return self.train_step_ga
+
     def _pjit_train_step(self) -> jax.stages.Wrapped:
         return pjit(
             self._train_step,
@@ -852,6 +880,41 @@ class SpmdTrainer(Module):
             donate_argnums=(0,),
         )
 
+    def train_step_ga(
+        self,
+        state: TrainerState,
+        input_batch: Dict[str, Any],
+    ) -> Tuple[TrainerState, NestedTensor]:
+        grad_buffer = None
+        metrics = {}
+        num_microbatches = self.config.gradient_accumulation_microbatches
+
+        # divide global batches into equal microbatches for accumulation
+        split_batches = [{} for _ in range(num_microbatches)]
+        for k, v in input_batch.items():
+            v_list = jnp.split(v, num_microbatches, axis=0)
+            sharding = v.sharding
+            for i in range(num_microbatches):
+                split_batches[i][k] = jax.device_put(v_list[i], sharding)
+
+        def append_metrics(metrics, microbatch_metrics):
+            for k, v in microbatch_metrics.items():
+                if k in metrics:
+                    metrics[k].append(v)
+                else:
+                    metrics[k] = [v]
+            return metrics
+
+        grad_buffer = jax.tree_map(lambda x: jnp.full_like(x, 0), self._trainer_state.model)
+        for i in range(num_microbatches):
+            grad_buffer, forward_output_collection, microbatch_metrics, return_key = self.jit_train_step_ga(self._trainer_state, split_batches[i], grad_buffer)
+            metrics = append_metrics(metrics, microbatch_metrics)
+
+        self._trainer_state, outputs = self.jit_opt_step_ga(self._trainer_state, forward_output_collection, grad_buffer, return_key)
+        metrics.update(summaries=outputs)
+
+        return self._trainer_state, metrics
+
     def compile_train_step(self) -> jax.stages.Compiled:
         with self.mesh():
             # Do not run init(), which require real devices.
@@ -868,6 +931,110 @@ class SpmdTrainer(Module):
             jit_train_step = self._pjit_train_step()
             lowered_train_step = jit_train_step.lower(trainer_state_specs, input_batch_specs)
             return lowered_train_step.compile()
+
+    def _train_step_ga(
+        self,
+        state: TrainerState,
+        input_batch: Dict[str, Any],
+        grad_buffer: NestedTensor,
+    ) -> Tuple[TrainerState, NestedTensor]:
+        # Shard and (possibly) dispatch the input batch
+        input_batch = utils.dispatch_input_batch(
+            input_batch, batch_axis_names=self.config.batch_axis_names
+        )
+
+        param_noise_key, forward_key, return_key = jax.random.split(
+            state.prng_key, 3
+        )
+
+        def train_cast(in_tree):
+            return utils.cast_floats(in_tree, to_dtype=self.config.train_dtype)
+
+        # A nested tree of booleans.
+        should_compute_gradients = self.learner.should_update_with_optimizers(state.model)
+        for path, value in flatten_items(should_compute_gradients):
+            if not value:
+                self.vlog(1, "Skipping gradients on %s", path)
+
+        def _forward(model_parameters_grad, model_parameters_no_grad, forward_input_batch):
+            model_parameters = jax.tree_util.tree_map(
+                lambda compute_grad, pg, png: pg if compute_grad else png,
+                should_compute_gradients,
+                model_parameters_grad,
+                model_parameters_no_grad,
+            )
+            params = train_cast(model_parameters)  # A copy of `model_parameters`.
+            params = self.model.apply_parameter_noise_recursively(param_noise_key, params)
+            (loss, aux), model_output_collection = F(
+                self.model,
+                state=params,
+                is_training=True,
+                prng_key=forward_key,
+                inputs=dict(input_batch=train_cast(forward_input_batch)),
+            )
+            return loss, (aux, model_output_collection)
+
+        # By default `value_and_grad` only computes gradients on the first arg,
+        # `model_parameters_grad`.
+        forward_and_grad = jax.value_and_grad(_forward, has_aux=True)
+        dummy_value = None
+        model_parameters_grad = jax.tree_util.tree_map(
+            lambda compute_gradients, v: v if compute_gradients else dummy_value,
+            should_compute_gradients,
+            state.model,
+        )
+        model_parameters_nograd = jax.tree_util.tree_map(
+            lambda compute_gradients, v: dummy_value if compute_gradients else v,
+            should_compute_gradients,
+            state.model,
+        )
+        # `grads` are computed for `model_parameters_grad`.
+        (loss, (forward_aux, forward_output_collection)), grads = forward_and_grad(
+            model_parameters_grad, model_parameters_nograd, input_batch
+        )
+
+        metrics = dict(
+            loss=loss,
+            aux=forward_aux,
+        )
+
+        grad_buffer = jax.tree_map(lambda x, y: x + y, grads, grad_buffer)
+        return grad_buffer, forward_output_collection, metrics, return_key
+
+    def _opt_step_ga(
+        self,
+        state: TrainerState,
+        forward_output_collection,
+        grads,
+        prng_key,
+    ) -> Tuple[TrainerState, NestedTensor]:
+
+        new_prng_key, learner_key = jax.random.split(
+            prng_key, 2
+        )
+
+        opt_params = self._opt_params(state.model)
+        state_updates = self._maybe_prune_empty(forward_output_collection.state_updates)
+        updated_model_params, learner_output_collection = F(
+            self.learner,
+            method="update",
+            state=state.learner,
+            is_training=True,
+            prng_key=learner_key,
+            inputs=dict(model_params=opt_params, gradients=grads, state_updates=state_updates),
+        )
+        updated_state = TrainerState(
+            prng_key=new_prng_key,
+            model=updated_model_params,
+            learner=learner_output_collection.state_updates,
+        )
+        
+        # TODO(ruoming): only retrieve summaries when necessary.
+        summaries = dict(
+            model=forward_output_collection.summaries,
+            learner=learner_output_collection.summaries,
+        )
+        return updated_state, summaries
 
     def _train_step(
         self,
