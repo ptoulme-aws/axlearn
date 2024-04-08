@@ -664,6 +664,9 @@ class SpmdTrainer(Module):
             return False
 
         if self.config.gradient_accumulation_microbatches > 1:
+            print("Using gradient Accum")
+            self.grad_step = 0
+            self.grad_buffer = jax.tree_map(lambda x: jnp.full_like(x, 0), self._trainer_state.model)
             self._jit_train_step = self._pjit_train_step_ga()
         else:
             self._jit_train_step = self._pjit_train_step()
@@ -843,21 +846,9 @@ class SpmdTrainer(Module):
     def _pjit_train_step_ga(self) -> jax.stages.Wrapped:
         self.jit_train_step_ga = pjit(
             self._train_step_ga,
-            in_shardings=(
-                self._trainer_state_partition_specs,
-                self._train_step_input_partition_specs(),
-                self._trainer_state_partition_specs.model,
-            ),
         )
         self.jit_opt_step_ga = pjit(
             self._opt_step_ga,
-            out_shardings=(
-                self._trainer_state_partition_specs,
-                dict(
-                    model=None,
-                    learner=None,
-                ),
-            ),
         )
 
         return self.train_step_ga
@@ -885,34 +876,18 @@ class SpmdTrainer(Module):
         state: TrainerState,
         input_batch: Dict[str, Any],
     ) -> Tuple[TrainerState, NestedTensor]:
-        grad_buffer = None
         metrics = {}
         num_microbatches = self.config.gradient_accumulation_microbatches
 
-        # divide global batches into equal microbatches for accumulation
-        split_batches = [{} for _ in range(num_microbatches)]
-        for k, v in input_batch.items():
-            v_list = jnp.split(v, num_microbatches, axis=0)
-            sharding = v.sharding
-            for i in range(num_microbatches):
-                split_batches[i][k] = jax.device_put(v_list[i], sharding)
+        self.grad_buffer, forward_output_collection, metrics, return_key = self.jit_train_step_ga(self._trainer_state, input_batch, self.grad_buffer)
+        self.grad_step += 1
 
-        def append_metrics(metrics, microbatch_metrics):
-            for k, v in microbatch_metrics.items():
-                if k in metrics:
-                    metrics[k].append(v)
-                else:
-                    metrics[k] = [v]
-            return metrics
-
-        grad_buffer = jax.tree_map(lambda x: jnp.full_like(x, 0), self._trainer_state.model)
-        for i in range(num_microbatches):
-            grad_buffer, forward_output_collection, microbatch_metrics, return_key = self.jit_train_step_ga(self._trainer_state, split_batches[i], grad_buffer)
-            metrics = append_metrics(metrics, microbatch_metrics)
-
-        self._trainer_state, outputs = self.jit_opt_step_ga(self._trainer_state, forward_output_collection, grad_buffer, return_key)
+        if self.grad_step == num_microbatches:
+            self._trainer_state, outputs, self.grad_buffer = self.jit_opt_step_ga(self._trainer_state, forward_output_collection, self.grad_buffer, return_key)
+            self.grad_step = 0
+        else:
+            outputs = {}
         metrics.update(summaries=outputs)
-
         return self._trainer_state, metrics
 
     def compile_train_step(self) -> jax.stages.Compiled:
@@ -998,8 +973,8 @@ class SpmdTrainer(Module):
             aux=forward_aux,
         )
 
-        grad_buffer = jax.tree_map(lambda x, y: x + y, grads, grad_buffer)
-        return grad_buffer, forward_output_collection, metrics, return_key
+        grads = jax.tree_map(lambda x, y: x + y, grads, grad_buffer)
+        return grads, forward_output_collection, metrics, return_key
 
     def _opt_step_ga(
         self,
@@ -1034,7 +1009,8 @@ class SpmdTrainer(Module):
             model=forward_output_collection.summaries,
             learner=learner_output_collection.summaries,
         )
-        return updated_state, summaries
+        grads = jax.tree_map(lambda x: x - x, grads)
+        return updated_state, summaries, grads
 
     def _train_step(
         self,
