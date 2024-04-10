@@ -1106,12 +1106,8 @@ def apply_rotary_position_embeddings(
             if rotary_value == True, else original value embeddings
     """
     def _rotate_half(x: jnp.ndarray) -> jnp.ndarray:
-        reshaped = jnp.reshape(x, (*x.shape[:-1], -1, 2))
-        flipped = jnp.flip(reshaped, axis=-1)
-        negate_const = jnp.array([-1.0, 1.0])
-        negated = flipped * negate_const
-        rotated = jnp.reshape(negated, key.shape)
-        return rotated
+        halves = jnp.split(x, 2, axis=-1)
+        return jnp.concatenate((-halves[1], halves[0]), axis=-1)
 
     # sin [batch_size, num_heads, sequence_length, embed_size_per_head//2]
     # cos [batch_size, num_heads, sequence_length, embed_size_per_head//2]
