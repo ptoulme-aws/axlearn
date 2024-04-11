@@ -167,6 +167,9 @@ class SpmdTrainer(Module):
         # increment within this interval.
         watchdog_timeout_seconds: Optional[float] = None
 
+        # Microbatches for gradient accumulation
+        gradient_accumulation_microbatches: Optional[int] = 1
+
     def __init__(
         self,
         cfg: Config,
@@ -912,7 +915,34 @@ class SpmdTrainer(Module):
 
         # By default `value_and_grad` only computes gradients on the first arg,
         # `model_parameters_grad`.
-        forward_and_grad = jax.value_and_grad(_forward, has_aux=True)
+        _forward_and_grad = jax.value_and_grad(_forward, has_aux=True)
+
+        num_microbatches =  self.config.gradient_accumulation_microbatches
+        
+        if num_microbatches > 1:
+            # create evenly sized accumulation microbatches, keep sequence dimension as it is.
+            input_batch = jax.tree_map(lambda x: x.reshape(num_microbatches,  -1, *x.shape[1:]), input_batch)
+            input_batch = jax.tree_util.tree_map(
+                lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, 'data', *([None for _ in range(len(x.shape) - 2)]))), input_batch
+            )
+
+            def _copy_zero(model_tree):
+                return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
+
+            def _forward_ga(model_parameters_grad, model_parameters_no_grad, forward_input_batch):
+                def run_microbatch(grad_buffer, microbatch):
+                    metrics, microbatch_grads = _forward_and_grad(model_parameters_grad, model_parameters_no_grad, microbatch)
+                    # accumulate gradients
+                    grad_buffer = jax.tree_map(lambda x, y: x + y, microbatch_grads, grad_buffer)
+                    return grad_buffer, metrics
+
+                grad_buffer = _copy_zero(model_parameters_grad)
+                grad_buffer, metrics = jax.lax.scan(run_microbatch, grad_buffer, forward_input_batch)
+                return metrics, grad_buffer
+            forward_and_grad = jax.jit(_forward_ga)
+        else:
+            forward_and_grad = _forward_and_grad
+
         dummy_value = None
         model_parameters_grad = jax.tree_util.tree_map(
             lambda compute_gradients, v: v if compute_gradients else dummy_value,
