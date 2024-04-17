@@ -579,16 +579,33 @@ class SpmdTrainer(Module):
                 learner=learner_params,
             )
 
-        logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
-        logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
-        init_computation = pjit(
-            _init_state,
-            in_shardings=(None, prebuilt_model_state_partition_spec),
-            out_shardings=self._trainer_state_partition_specs,
+        # logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
+        # logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
+        # init_computation = pjit(
+        #     _init_state,
+        #     in_shardings=(None, prebuilt_model_state_partition_spec),
+        #     out_shardings=self._trainer_state_partition_specs,
+        # )
+        # self._step_log("Initializing trainer state.")
+        # with self.mesh():
+        #     self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+
+        # TODO: apoorvgu I DONT LIKE THIS
+        # we already make this change in the common.py using set_double_shard_weights_config
+        model_specs = jax.tree_util.tree_map(
+            lambda value: create_named_sharding(value, self.mesh()) if isinstance(value, PartitionSpec) else None,
+            self._trainer_state_partition_specs[1],
         )
-        self._step_log("Initializing trainer state.")
-        with self.mesh():
-            self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+        learner_specs = jax.tree_util.tree_map(
+            lambda value: create_named_sharding_optimizer(value, self.mesh()) if isinstance(value, TensorSpec) else None,
+            self._learner_state_partition_specs,
+        )
+
+        init_computation = jax.jit(
+            _init_state,
+            out_shardings=(TrainerState(None, model_specs, learner_specs)),
+        )
+        self._trainer_state = init_computation(prng_key, prebuilt_model_state)
 
     def _log_trainer_state_stats(self):
         total_num_params = count_model_params(self._trainer_state.model)
