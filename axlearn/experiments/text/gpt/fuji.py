@@ -21,6 +21,8 @@ from axlearn.common.layers import RMSNorm
 from axlearn.experiments.text.gpt.common import STEP_DTYPE, learner_config, mesh_shape_from_axes
 from axlearn.experiments.text.gpt.common import model_config as common_model_config
 from axlearn.experiments.text.gpt.common import scaled_hidden_dim
+# TODO: apoorvgu I do not like this DataPartitionType
+from axlearn.common.utils import DataPartitionType
 
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
@@ -43,6 +45,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 peak_lr=6e-4,
                 weight_decay=0.01,
             ),
+            input_partition_type=DataPartitionType.DATA,
             max_sequence_length=64,
             train_batch_size=16,
             max_step=3000,
@@ -56,6 +59,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 num_heads=32,
             ),
             learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
+            input_partition_type=DataPartitionType.DATA,
             train_batch_size=4 * 1024 * 1024 // MAX_SEQUENCE_LENGTH,  # 4M tokens.
             max_step=500_000,  # 2T tokens // 4M tokens/step.
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
@@ -70,7 +74,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                     mesh_shape_from_axes(data=-1, fsdp=8),
                 ),
                 (   
-                    "neuron-(trn1.32xlarge|trn1n.32xlarge)-(64|256|512|1024)",
+                    "neuron-(trn1.32xlarge|trn1n.32xlarge)-(32|64|256|512|1024)",
                     mesh_shape_from_axes(data=-1, model=8),
                 ),
             ),
