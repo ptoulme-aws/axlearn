@@ -290,9 +290,13 @@ def make_segment_mask(*, source_segments: Tensor, target_segments: Tensor) -> Te
         value at [..., i, j] = 0 if target_segments[..., i] == source_segments[..., j], or -inf
         otherwise.
     """
-    target_segments = jnp.expand_dims(target_segments, -1)
-    source_segments = jnp.expand_dims(source_segments, -2)
-    res = (jax.lax.ne(source_segments, target_segments) * NEG_INF)[:, None, ...]
+    #target_segments = jnp.expand_dims(target_segments, -1)
+    #source_segments = jnp.expand_dims(source_segments, -2)
+    #res = (jax.lax.ne(source_segments, target_segments) * NEG_INF)[:, None, ...]
+    target_segments = jnp.asarray(target_segments, dtype=jnp.bfloat16)[:, None]
+    source_segments = jnp.asarray(source_segments, dtype=jnp.bfloat16)[..., None]
+    #res = jnp.asarray((jax.lax.eq(source_segments, target_segments))[:, None, ...], dtype=jnp.bfloat16)
+    res = jnp.asarray((jax.lax.ne(source_segments, target_segments) * NEG_INF)[:, None, ...], dtype=jnp.bfloat16)
     return res
 
 
@@ -532,6 +536,7 @@ def apply_attention_logit_biases(
     if attention_logit_biases is None:
         return logits
     return logits + attention_logit_biases.astype(logits.dtype)
+    #return jnp.logical_and(logits, attention_logit_biases.astype(logits.dtype))
 
 
 def softmax_with_biases(logits: Tensor, attention_logit_biases: Optional[Tensor] = None) -> Tensor:
@@ -546,7 +551,8 @@ def softmax_with_biases(logits: Tensor, attention_logit_biases: Optional[Tensor]
         A Tensor of same shape and dtype as logits.
     """
     check_numerics(logits)
-    logits = apply_attention_logit_biases(logits, attention_logit_biases)
+    #logits = apply_attention_logit_biases(logits, attention_logit_biases)
+    #logits = jnp.where(mask, logits, NEG_INF) # apply mask
     logits_dtype = logits.dtype
     if logits_dtype in (jnp.bfloat16, jnp.float16):
         # Avoid computing softmax in 16-bit floats.
@@ -1585,6 +1591,7 @@ class MultiheadAttention(BaseLayer):
         probs = self.dropout(probs)
         context = jnp.einsum("bnts,bsnh->btnh", probs, v_proj).astype(v_proj.dtype)
         context = self._remat_name(context, "context")
+        probs = self._remat_name(probs, "probs")
         return context, probs
 
     def forward(
@@ -2149,9 +2156,12 @@ class TransformerAttentionLayer(BaseLayer):
 
             if cfg.structure == "prenorm":
                 skip_input = target  # pre-norm: where normalization happens within the residual part.
+                skip_input = self._remat_name(skip_input, 'residual_skip')
                 norm_target = self.norm(target)
+                norm_target = self._remat_name(norm_target, 'attention_norm')
                 atten_state, atten_output = attention_thunk(norm_target)
                 data = skip_input + self.stochastic_depth(self.dropout(atten_output.data))
+                data = self._remat_name(data, 'residual_add')
             elif cfg.structure == "postnorm":
                 # This is the structure used by the original Transformer, BERT, and RoBERTa.
                 atten_state, atten_output = attention_thunk(target)
@@ -2427,8 +2437,10 @@ class TransformerFeedForwardLayer(BaseLayer):
 
             remat_pt1 = "activation"
             remat_pt2 = "linear2"
+            inputs = self._remat_name(inputs, 'residual_input')
             if cfg.structure == "prenorm":
                 x = self.norm(inputs)
+                x = self._remat_name(x, 'mlp_norm')
                 x = self._linear1_activation(x)
                 x = self._remat_name(x, remat_pt1)
                 x = self.dropout1(x)
@@ -2439,6 +2451,7 @@ class TransformerFeedForwardLayer(BaseLayer):
                 if cfg.residual_weight != 1:
                     x *= cfg.residual_weight
                 x += inputs
+                x=self._remat_name(x, 'mlp_residual')
             elif cfg.structure == "postnorm":
                 x = self._linear1_activation(inputs)
                 x = self._remat_name(x, remat_pt1)
@@ -3557,18 +3570,34 @@ def build_remat_spec(
     if stack_cfg.klass is PipelinedTransformerLayer:
         return None
     attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
-    #rms_norm = stack_cfg.layer.self_attention.attention.norm.klass.__name__
-    #mlp_name = stack_cfg.layer.feed_forward
+    attention_norm = stack_cfg.layer.self_attention.klass.__name__
+    mlp_name = stack_cfg.layer.feed_forward.klass.__name__
     if jax.default_backend() == 'neuron':
         return RematSpec(
             prevent_cse=stack_cfg.klass is StackedTransformerLayer,
             # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
             # or Repeated Conformers) we can enable common subexpression elimination optimizations.
             policy=config_for_function(jax_remat_policies.save_only_these_names).set(
-                names_which_can_be_saved=[
-                    f"{attention_name}.{el}"
-                    for el in ["q_proj", "k_proj", "v_proj", "context"]
-                ]
+                names_which_can_be_saved=(
+                    [f"{attention_name}.{el}"
+                    for el in ["q_proj", "k_proj", "v_proj", "context"]] +
+                    [f"{mlp_name}.{el}" for el in ["activation", "linear2"]]
+                )
+            ),
+        )
+    if jax.default_backend() == 'neuron2':
+        return RematSpec(
+            prevent_cse=stack_cfg.klass is StackedTransformerLayer,
+            # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
+            # or Repeated Conformers) we can enable common subexpression elimination optimizations.
+            policy=config_for_function(jax_remat_policies.save_only_these_names).set(
+                names_which_can_be_saved=(
+                    [f"{attention_name}.{el}"
+                    for el in ["q_proj", "k_proj", "v_proj", 'o_proj', "context"]] +
+                    [f"{mlp_name}.{el}" for el in ["mlp_norm", "mlp_residual", "residual_input"]] +
+                    [f"{attention_norm}.{el}" for el in ["attention_norm", "residual_skip", "residual_add"]] + 
+                    [f"RMSNorm.{el}" for el in ["moment2","sqrt", "sqrt_mul", "output"]]
+                )
             ),
         )
     return RematSpec(
@@ -3632,7 +3661,13 @@ class CausalAttentionLogitBiasLayer(AttentionLogitBiasLayer):
     def forward(self, *, segment_ids: Tensor, positions: Tensor) -> Tensor:
         """Refer to AttentionLogitBiasLayer.forward for docstring."""
         # Note: padding tokens are not explicitly masked.
-        causal_bias = (positions[:, None, :, None] < positions[:, None, None, :]) * NEG_INF
+        #causal_bias = (positions[:, None, :, None] < positions[:, None, None, :]) * NEG_INF
+        causal_bias = jnp.asarray(
+        (positions[:, None, :, None] < positions[:, None, None, :]) * NEG_INF,
+        dtype=jnp.bfloat16
+        )
+        #causal_bias = jnp.asarray(jnp.where((positions[:, None, :, None] >= positions[:, None, None, :]), 1, 0), dtype=jnp.bfloat16)
+
         return apply_attention_logit_biases(
             causal_bias, make_segment_mask(source_segments=segment_ids, target_segments=segment_ids)
         )

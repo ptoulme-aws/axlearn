@@ -16,8 +16,8 @@ sudo apt-get update -y && sudo apt-get install -y linux-headers-$(uname -r)
 sudo apt-get remove -y aws-neuronx-devtools || true
 sudo apt-get remove -y aws-neuronx-tools aws-neuronx-collectives aws-neuronx-dkms aws-neuronx-runtime-lib
 # Install Neuron OS packages and dependencies
-sudo dpkg -i aws-neuronx-runtime-lib-2.x.9937.0-b6de4480f.deb
-sudo dpkg -i /shared/apoorvgu/aws-neuronx-collectives-2.20.22.0-c101c322e.deb
+sudo dpkg -i aws-neuronx-runtime-lib-2.x.11048.0-061f19254.deb
+sudo dpkg -i aws-neuronx-collectives-2.x.11725.0-85e6cb643.deb
 #sudo dpkg -i aws-neuronx-runtime-lib-2.x.9937.0-b6de4480f.deb
 sudo apt-get -o Dpkg::Options::="--force-overwrite" install --reinstall --allow-downgrades -y aws-neuronx-dkms aws-neuronx-tools
 

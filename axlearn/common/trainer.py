@@ -925,12 +925,24 @@ class SpmdTrainer(Module):
             state.model,
         )
 
-        self.accum = 2
+        self.accum = 8
         if self.accum > 1:
             # create evenly sized accumulation microbatches, keep sequence dimension as it is.
-            input_batch = jax.tree_map(lambda x: x.reshape(self.accum,  -1, *x.shape[1:]), input_batch)
+            #input_batch = jax.tree_map(lambda x: x.reshape(self.accum,  -1, *x.shape[1:]), input_batch)
+            #input_batch = jax.tree_util.tree_map(
+            #    lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, 'data', *([None for _ in range(len(x.shape) - 2)]))), input_batch
+            #)
+            # Partition the input batch along the batch dimension
+            #input_batch = jax.tree_util.tree_map(
+            #    lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec('data', None)),
+            #    input_batch
+            #)
+
+            # Reshape the partitioned input batch
+            input_batch = jax.tree_map(lambda x: x.reshape(self.accum, -1, *x.shape[1:]), input_batch)
             input_batch = jax.tree_util.tree_map(
-                lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, 'data', *([None for _ in range(len(x.shape) - 2)]))), input_batch
+                lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, 'data', *([None for _ in range(len(x.shape) - 2)]))),
+                input_batch
             )
 
             def _copy_zero(model_tree):

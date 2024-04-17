@@ -227,7 +227,7 @@ def model_config(
         vocab_size=vocab_size,
         emb=emb_cfg,
         dropout_rate=dropout_rate,
-        lm_head=LmHead.default_config().set(dtype=jnp.bfloat16)  #bfloat16
+        lm_head=LmHead.default_config().set(dtype=jnp.bfloat16)
     )
     # Model.
     model_param_init = DefaultInitializer.default_config().set(
