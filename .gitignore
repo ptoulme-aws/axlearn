@@ -169,3 +169,8 @@ wandb/
 
 # Custom
 .axlearn.config
+
+axlearn/common/neuron_tests/c4_test_dump
+axlearn/common/neuron_tests/compiler_dump
+axlearn/common/neuron_tests/jax4_dump
+axlearn/common/neuron_tests/*.out

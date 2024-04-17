@@ -1618,7 +1618,8 @@ class MultiheadAttention(BaseLayer):
             value=value,
             attention_logit_biases=attention_logit_biases,
         )
-        output = with_sharding_constraint(output, PartitionSpec('data', None, None))
+        if jax.default_backend() == "neuron":
+            output = with_sharding_constraint(output, PartitionSpec('data', None, None))
         return output
 
     def _cap_logits(self, logits: Tensor) -> Tensor:
@@ -2953,6 +2954,9 @@ def set_double_shard_weights_config(
         seq_axis_names: Axis name(s) over which we shard sequence-parallel tensors.
     """
 
+    if jax.default_backend() == "neuron":
+        seq_axis_names = None
+
     # pytype: disable=attribute-error
     def set_attn_partition_specs(attn_layer: MultiheadAttention.Config):
         # Shard weights.
@@ -2967,11 +2971,11 @@ def set_double_shard_weights_config(
         ff_layer.linear1.param_partition_spec = (fsdp_axis_names, tp_axis_names)
         ff_layer.linear2.param_partition_spec = (tp_axis_names, fsdp_axis_names)
         # Encourage the right activation sharding.
-        #ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
-        #ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
-        ff_layer.linear1.output_partition_spec = (batch_axis_names, None, tp_axis_names)
-        ff_layer.linear2.output_partition_spec = (batch_axis_names, None, None)
-
+        # ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        # ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, None)
+        
     if not isinstance(cfg, Sequence):
         cfg = [cfg]
 
@@ -3556,8 +3560,6 @@ def build_remat_spec(
     if stack_cfg.klass is PipelinedTransformerLayer:
         return None
     attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
-    #rms_norm = stack_cfg.layer.self_attention.attention.norm.klass.__name__
-    #mlp_name = stack_cfg.layer.feed_forward
     if jax.default_backend() == 'neuron':
         return RematSpec(
             prevent_cse=stack_cfg.klass is StackedTransformerLayer,
@@ -3577,7 +3579,7 @@ def build_remat_spec(
         policy=config_for_function(jax_remat_policies.save_only_these_names).set(
             names_which_can_be_saved=[
                 f"{attention_name}.{el}"
-                for el in ["q_proj", "k_proj", "v_proj", "context"]
+                for el in ["q_proj", "k_proj", "v_proj", "context", "o_proj"]
             ]
         ),
     )

@@ -1521,7 +1521,7 @@ def adastar_optimizer(
             )
 
         return _AdastarState(
-            count=jnp.zeros([], dtype=jnp.int32), pps=jax.tree_util.tree_map(_init, params)
+            count=jnp.zeros([], jnp.int32), pps=jax.tree_util.tree_map(_init, params)
         )
 
     def update_fn(grads: NestedTensor, state: _AdastarState, params: NestedOptParam):
