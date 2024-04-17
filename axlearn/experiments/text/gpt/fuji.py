@@ -51,7 +51,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=32,
+                num_layers=2,
                 hidden_dim=128 * 32,
                 num_heads=32,
             ),
@@ -68,6 +68,10 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 (
                     "gpu-(p5.48xlarge|p4de.24xlarge)-(256|512|1024)",
                     mesh_shape_from_axes(data=-1, fsdp=8),
+                ),
+                (   
+                    "neuron-(trn1.32xlarge|trn1n.32xlarge)-(64|256|512|1024)",
+                    mesh_shape_from_axes(data=-1, model=8),
                 ),
             ),
         )

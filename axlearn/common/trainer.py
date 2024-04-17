@@ -14,6 +14,7 @@ import tensorflow as tf
 from absl import logging
 from jax import numpy as jnp
 from jax.experimental.pjit import pjit
+from jax.sharding import NamedSharding
 
 from axlearn.common import utils
 from axlearn.common.base_layer import ParameterSpec
@@ -34,12 +35,14 @@ from axlearn.common.utils import (
     NestedPartitionSpec,
     NestedTensor,
     PartitionSpec,
+    DataPartitionType,
     Tensor,
     count_model_params,
     flatten_items,
     match_regex_rules,
     prune_tree,
     thread_stack_traces,
+    TensorSpec,
 )
 
 
@@ -155,6 +158,10 @@ class SpmdTrainer(Module):
         # If > 0, run a watchdog thread to print the thread stack traces if step does not
         # increment within this interval.
         watchdog_timeout_seconds: Optional[float] = None
+
+        # The input partition:
+        # Options: FULL (default), DATA, REPLICATED
+        input_partition_type: Required[DataPartitionType] = DataPartitionType.DATA
 
     def __init__(
         self,
@@ -272,7 +279,7 @@ class SpmdTrainer(Module):
 
     def _train_step_input_partition_specs(self):
         # By default, each input tensor is fully partitioned along the batch axis.
-        return utils.input_partition_spec()
+        return utils.input_partition_spec(self.config.input_partition_type)
 
     def model_params_for_eval(self):
         state = self.trainer_state
@@ -437,7 +444,7 @@ class SpmdTrainer(Module):
                     self._step = self._step + 1
                     self.vlog(3, "Start step %s", self.step)
                     output = self._run_step(
-                        utils.host_to_global_device_array(input_batch),
+                        utils.host_to_global_device_array(input_batch, partition=cfg.input_partition_type),
                         force_run_evals=force_run_eval_sets_at_max_step
                         if self.step >= cfg.max_step
                         else None,
@@ -572,16 +579,33 @@ class SpmdTrainer(Module):
                 learner=learner_params,
             )
 
-        logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
-        logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
-        init_computation = pjit(
-            _init_state,
-            in_shardings=(None, prebuilt_model_state_partition_spec),
-            out_shardings=self._trainer_state_partition_specs,
+        # logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
+        # logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
+        # init_computation = pjit(
+        #     _init_state,
+        #     in_shardings=(None, prebuilt_model_state_partition_spec),
+        #     out_shardings=self._trainer_state_partition_specs,
+        # )
+        # self._step_log("Initializing trainer state.")
+        # with self.mesh():
+        #     self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+
+        # TODO: apoorvgu I DONT LIKE THIS
+        # we already make this change in the common.py using set_double_shard_weights_config
+        model_specs = jax.tree_util.tree_map(
+            lambda value: create_named_sharding(value, self.mesh()) if isinstance(value, PartitionSpec) else None,
+            self._trainer_state_partition_specs[1],
         )
-        self._step_log("Initializing trainer state.")
-        with self.mesh():
-            self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+        learner_specs = jax.tree_util.tree_map(
+            lambda value: create_named_sharding_optimizer(value, self.mesh()) if isinstance(value, TensorSpec) else None,
+            self._learner_state_partition_specs,
+        )
+
+        init_computation = jax.jit(
+            _init_state,
+            out_shardings=(TrainerState(None, model_specs, learner_specs)),
+        )
+        self._trainer_state = init_computation(prng_key, prebuilt_model_state)
 
     def _log_trainer_state_stats(self):
         total_num_params = count_model_params(self._trainer_state.model)
@@ -984,3 +1008,27 @@ def select_mesh_config(trainer_config: SpmdTrainer.Config, *, mesh_selector: str
         logging.info("Mesh selector %s matches mesh rule %s", mesh_selector, mesh)
         if mesh is not REQUIRED:
             trainer_config.mesh_shape = mesh
+
+def create_named_sharding_optimizer(tensor_spec, mesh):
+    zero1=True
+    if isinstance(tensor_spec, TensorSpec):
+        if tensor_spec.mesh_axes == (None,):
+            return NamedSharding(mesh, PartitionSpec(None))
+        else:
+            if len(tensor_spec.mesh_axes) > len(tensor_spec.shape):
+                adjusted_mesh_axes = tensor_spec.mesh_axes[1:]
+            else:
+                adjusted_mesh_axes = tensor_spec.mesh_axes
+            if zero1:
+                adjusted_mesh_axes = tuple('data' if axis == 'fsdp' else axis for axis in adjusted_mesh_axes)
+            partition_spec = PartitionSpec(*adjusted_mesh_axes)
+            return NamedSharding(mesh, partition_spec)
+    return tensor_spec
+
+def create_named_sharding(param_spec, mesh):
+    if isinstance(param_spec, PartitionSpec):
+        return (
+            mesh,
+            param_spec
+        )
+    return param_spec

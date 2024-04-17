@@ -293,6 +293,7 @@ def learner_config(
             ),
         ]
     )
+    # return learner.AccumulatedLearner.default_config().set(optimizer=optimizer_cfg)
     return learner.Learner.default_config().set(optimizer=optimizer_cfg)
 
 
