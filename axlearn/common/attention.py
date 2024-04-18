@@ -3560,9 +3560,21 @@ def build_remat_spec(
         None (if no rematerialization is needed) or a RematSpec.
     """
     # TODO(markblee): Switch to using isinstance everywhere.
+    attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
     if stack_cfg.klass is PipelinedTransformerLayer:
         return None
-    attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
+    if jax.default_backend() == 'neuron':
+        return RematSpec(
+            prevent_cse=stack_cfg.klass is StackedTransformerLayer,
+            # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
+            # or Repeated Conformers) we can enable common subexpression elimination optimizations.
+            policy=config_for_function(jax_remat_policies.save_only_these_names).set(
+                names_which_can_be_saved=[
+                    f"{attention_name}.{el}"
+                    for el in ["q_proj", "k_proj", "v_proj", "context"]
+                ]
+            ),
+        )
     return RematSpec(
         prevent_cse=stack_cfg.klass is StackedTransformerLayer,
         # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers

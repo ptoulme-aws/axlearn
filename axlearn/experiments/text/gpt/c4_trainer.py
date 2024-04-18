@@ -96,7 +96,6 @@ def named_trainer_configs() -> Dict[str, TrainerConfigFn]:
     for model_size in fuji.MODEL_SIZES:
         config_name = make_config_name(arch=arch, model_size=model_size)
         kwargs = fuji.get_trainer_kwargs(model_size, vocab_size=vocab_size)
-        print("kwargs", kwargs) # TODO: debug
         # pylint: disable-next=unexpected-keyword-arg,missing-kwoa
         config_map[config_name] = get_trainer_config_fn(
             train_input_source=train_input_source.clone(

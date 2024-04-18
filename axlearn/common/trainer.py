@@ -579,16 +579,46 @@ class SpmdTrainer(Module):
                 learner=learner_params,
             )
 
-        logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
-        logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
-        init_computation = pjit(
-            _init_state,
-            in_shardings=(None, prebuilt_model_state_partition_spec),
-            out_shardings=self._trainer_state_partition_specs,
+        # logging.info("prebuilt_model_state_partition_spec: %s", prebuilt_model_state_partition_spec)
+        # logging.info("trainer_state_partition_specs: %s", self._trainer_state_partition_specs)
+        # init_computation = pjit(
+        #     _init_state,
+        #     in_shardings=(None, prebuilt_model_state_partition_spec),
+        #     out_shardings=self._trainer_state_partition_specs,
+        # )
+        # self._step_log("Initializing trainer state.")
+        # with self.mesh():
+        #     self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+
+        # model_specs = jax.tree_util.tree_map(
+        #     lambda value: create_named_sharding(value, self.mesh()) if isinstance(value, PartitionSpec) else None,
+        #     self._trainer_state_partition_specs[1],
+        # )
+        # learner_specs = jax.tree_util.tree_map(
+        #     lambda value: create_named_sharding_optimizer(value, self.mesh()) if isinstance(value, TensorSpec) else None,
+        #     self._learner_state_partition_specs,
+        # )
+        print("\nlearner_specs before", self._learner_state_partition_specs)
+
+        learner_specs = jax.tree_util.tree_map(
+            lambda value: create_named_sharding_optimizer(value, self.mesh()) if isinstance(value, TensorSpec) else None,
+            self._learner_state_partition_specs,
         )
+
+        # m1 = jax.tree_util.tree_map(lambda value: isinstance(value, jax.sharding.Mesh), model_specs)
+        # print("in model_specs", m1)
+        # m2 = jax.tree_util.tree_map(lambda value: isinstance(value, jax.sharding.Mesh), learner_specs)
+        # print("in learner_specs", m2)
+
         self._step_log("Initializing trainer state.")
+        # print("model_specs", model_specs)
+        print("\n learner_specs after", learner_specs)
         with self.mesh():
-            self._trainer_state = init_computation(prng_key, prebuilt_model_state)
+            init_computation = pjit(
+                _init_state,
+                out_shardings=(TrainerState(None, self._trainer_state_partition_specs.model, learner_specs)),
+            )
+        self._trainer_state = init_computation(prng_key, prebuilt_model_state)
 
     def _log_trainer_state_stats(self):
         total_num_params = count_model_params(self._trainer_state.model)
@@ -780,6 +810,12 @@ class SpmdTrainer(Module):
         with jax.profiler.StepTraceAnnotation("train", step_num=self.step):
             # Note(Jan 2022):
             # pjit currently requires all parameters to be specified as positional args.
+            # ss = jax.tree_map(lambda param: (param.shape, param.sharding), self.trainer_state.model)
+            # print("\n model shape shard", ss)
+
+            # ss = jax.tree_map(lambda param: (param.shape, param.sharding), self.trainer_state.learner)
+            # print("\n learner shape shard", ss)
+
             self._trainer_state, outputs = self._jit_train_step(self._trainer_state, input_batch)
 
         if self.step % 100 == 0 or 0 <= self.step <= 5:
@@ -996,7 +1032,8 @@ def create_named_sharding_optimizer(tensor_spec, mesh):
     zero1=True
     if isinstance(tensor_spec, TensorSpec):
         if tensor_spec.mesh_axes == (None,):
-            return NamedSharding(mesh, PartitionSpec(None))
+            return PartitionSpec(None)
+            # return NamedSharding(mesh, PartitionSpec(None))
         else:
             if len(tensor_spec.mesh_axes) > len(tensor_spec.shape):
                 adjusted_mesh_axes = tensor_spec.mesh_axes[1:]
@@ -1004,8 +1041,8 @@ def create_named_sharding_optimizer(tensor_spec, mesh):
                 adjusted_mesh_axes = tensor_spec.mesh_axes
             if zero1:
                 adjusted_mesh_axes = tuple('data' if axis == 'fsdp' else axis for axis in adjusted_mesh_axes)
-            partition_spec = PartitionSpec(*adjusted_mesh_axes)
-            return NamedSharding(mesh, partition_spec)
+            return PartitionSpec(*adjusted_mesh_axes)
+            # return NamedSharding(mesh, partition_spec)
     return tensor_spec
 
 def create_named_sharding(param_spec, mesh):

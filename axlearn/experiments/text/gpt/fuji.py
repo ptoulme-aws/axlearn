@@ -14,6 +14,7 @@ from axlearn.common.attention import (
     CausalAttentionLogitBiasLayer,
     FusedQKVLinear,
     RepeatedTransformerLayer,
+    StackedTransformerLayer,
     RoFormerQKVLinear,
 )
 from axlearn.common.embedding import TransformerTextEmbeddings
@@ -23,10 +24,10 @@ from axlearn.experiments.text.gpt.common import model_config as common_model_con
 from axlearn.experiments.text.gpt.common import scaled_hidden_dim
 # TODO: apoorvgu I do not like this DataPartitionType
 from axlearn.common.utils import DataPartitionType
-
+import jax
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
-
+TRN_TP_SIZE=8
 
 def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     """Construct default trainer kwargs given a model size."""
@@ -55,12 +56,16 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
         trainer_kwargs = dict(
             model_kwargs=dict(
                 num_layers=2,
-                hidden_dim=128 * 32,
+                hidden_dim=4096,
                 num_heads=32,
+                vocab_size=32000,
+                ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
             ),
             learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
             input_partition_type=DataPartitionType.DATA,
-            train_batch_size=4 * 1024 * 1024 // MAX_SEQUENCE_LENGTH,  # 4M tokens.
+            max_sequence_length=MAX_SEQUENCE_LENGTH,
+            # train_batch_size=4 * 1024 * 1024 // MAX_SEQUENCE_LENGTH,  # 4M tokens.
+            train_batch_size=int(jax.device_count()/TRN_TP_SIZE),
             max_step=500_000,  # 2T tokens // 4M tokens/step.
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
@@ -75,7 +80,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 ),
                 (   
                     "neuron-(trn1.32xlarge|trn1n.32xlarge)-(32|64|256|512|1024)",
-                    mesh_shape_from_axes(data=-1, model=8),
+                    mesh_shape_from_axes(data=-1, model=TRN_TP_SIZE),
                 ),
             ),
         )
@@ -125,7 +130,7 @@ def model_config(
         hidden_dim=hidden_dim,
         num_heads=num_heads,
         vocab_size=vocab_size,
-        stack_cfg=RepeatedTransformerLayer.default_config(),
+        stack_cfg=StackedTransformerLayer.default_config(),
         activation_fn=activation_fn,
         ffn_dim=ffn_dim,
         normalization=RMSNorm.default_config().set(eps=1e-5, forward_dtype=None),
