@@ -15,12 +15,23 @@ echo "==============================================="
 # rm -rf /shared/apoorvgu/fs_drop/axlearn/compiler_dump
 # rm -rf /shared/apoorvgu/fs_drop/axlearn/jax_dump
 # rm -rf /shared/apoorvgu/fs_drop/axlearn/jax4_dump
-OUTPUT_DIR=/shared/apoorvgu/fs_drop/axlearn/out/
-# DATA_DIR=FAKE
+OUTPUT_DIR=./c4_test_dump
 DATA_DIR=gs://axlearn-public/tensorflow_datasets
-python3 -m axlearn.common.launch_trainer_main \
-    --module=text.gpt.c4_trainer --config=fuji-7B \
-    --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
-    --jax_backend=neuron --mesh_selector=neuron-trn1.32xlarge-64 \
-    --distributed_coordinator=$MASTER_ADDR:$MASTER_PORT --num_processes=$SLURM_NTASKS \
-    --process_id=$SLURM_NODEID
+# python3 -m axlearn.common.launch_trainer_main \
+#     --module=text.gpt.c4_trainer --config=fuji-7B \
+#     --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
+#     --jax_backend=neuron --mesh_selector=neuron-trn1.32xlarge-64 \
+#     --distributed_coordinator=$MASTER_ADDR:$MASTER_PORT --num_processes=$SLURM_NTASKS \
+#     --process_id=$SLURM_NODEID
+
+# cpu run
+# export JAX_PLATFORMS='cpu'
+# python3 -m axlearn.common.launch_trainer_main \
+#     --module=text.gpt.c4_trainer --config=fuji-7B \
+#     --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
+#     --jax_backend=cpu --mesh_selector=neuron-trn1.32xlarge-64 \
+#     --distributed_coordinator=$MASTER_ADDR:$MASTER_PORT --num_processes=$SLURM_NTASKS \
+#     --process_id=$SLURM_NODEID
+
+export JAX_PLATFORMS='cpu'
+python3 compare_grads.py ./updated_compare1/

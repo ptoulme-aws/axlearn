@@ -782,6 +782,27 @@ class SpmdTrainer(Module):
             # pjit currently requires all parameters to be specified as positional args.
             self._trainer_state, outputs = self._jit_train_step(self._trainer_state, input_batch)
 
+
+        from jaxlib.xla_extension import ArrayImpl
+        def append_weight(file, state_stack):
+            if not isinstance(state_stack, ArrayImpl) and len(state_stack.keys()) != 0:
+                for key in state_stack.keys():
+                    append_weight(file, state_stack[key])
+            else:
+                if len(state_stack) != 0:
+                    jnp.save(file, state_stack)
+
+        if self.step < 4:
+            with open("updated_states_" + jax.default_backend() + "_step" + str(self.step) + ".npy", 'wb') as f:
+                logging.info("before append")
+                append_weight(f, self._trainer_state.model)
+                logging.info("after append")
+                # jnp.save(f, flattened_states)
+                # jnp.save(f, self._trainer_state.model['decoder']['transformer']['layer0']['feed_forward']['linear1_0']['weight'])
+
+            # with open("updated_states_" + jax.default_backend() + "_step" + str(self.step) + ".npy", 'wb') as f:
+            #     jnp.save(f, self._trainer_state.model['decoder']['transformer']['layer0']['feed_forward']['linear1_0']['weight'])
+
         if self.step % 100 == 0 or 0 <= self.step <= 5:
             self._step_log(
                 "loss=%s aux=%s",
