@@ -8,23 +8,27 @@ The fuji models are set up to imitate LLaMA-1 (https://arxiv.org/abs/2302.13971)
 """
 
 from typing import Any, Dict, Optional, Union
-
+import os
 from axlearn.common import causal_lm, config
 from axlearn.common.attention import (
     CausalAttentionLogitBiasLayer,
     FusedQKVLinear,
     RepeatedTransformerLayer,
     RoFormerQKVLinear,
+    StackedTransformerLayer
 )
+from axlearn.common.utils import DataPartitionType
 from axlearn.common.embedding import TransformerTextEmbeddings
 from axlearn.common.layers import RMSNorm
 from axlearn.experiments.text.gpt.common import STEP_DTYPE, learner_config, mesh_shape_from_axes
 from axlearn.experiments.text.gpt.common import model_config as common_model_config
 from axlearn.experiments.text.gpt.common import scaled_hidden_dim
+import jax
 
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
-
+TRN_MODEL_AXIS_SIZE=8
+GRADIENT_ACCUMULATION_MICROBATCHES=8
 
 def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     """Construct default trainer kwargs given a model size."""
@@ -33,30 +37,52 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     if model_size == "test":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=4,
-                hidden_dim=8,
-                ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
-                num_heads=4,
-                vocab_size=32,
+                num_layers=32,
+                hidden_dim=4096,
+                #ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
+                ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
+                num_heads=32,
+                vocab_size=32000,
             ),
             learner_kwargs=dict(
                 peak_lr=6e-4,
                 weight_decay=0.01,
             ),
-            max_sequence_length=64,
-            train_batch_size=16,
-            max_step=3000,
-            mesh_shape=mesh_shape_from_axes(),  # cpu
+            input_partition_type=DataPartitionType.DATA,
+            max_sequence_length=2048,
+            train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
+            max_step=20000,
+            mesh_shape=mesh_shape_from_axes(data=jax.device_count()/TRN_MODEL_AXIS_SIZE, model=TRN_MODEL_AXIS_SIZE),
+            mesh_rules=(
+                # tpu-v4. step time: 3.03s.
+                ("tpu-v4-(1024|2048)", mesh_shape_from_axes(data=-1, fsdp=16)),
+                # tpu-v5e. step time: TBD.
+                ("tpu-v5litepod-256", mesh_shape_from_axes(data=-1, fsdp=16)),
+                # H100/A100 80G. Maximum per-node batch size = 64, hence need >= 32 nodes.
+                (
+                    "gpu-(p5.48xlarge|p4de.24xlarge)-(256|512|1024)",
+                    mesh_shape_from_axes(data=-1, fsdp=8),
+                ),
+                (   
+                    "neuron-(trn1.32xlarge|trn1n.32xlarge)-(32|64|256|512|1024)",
+                    mesh_shape_from_axes(data=-1, model=TRN_MODEL_AXIS_SIZE),
+                ),
+            ),
         )
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
                 num_layers=32,
                 hidden_dim=128 * 32,
+                ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=32,
+                vocab_size=32000,
             ),
             learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
-            train_batch_size=4 * 1024 * 1024 // MAX_SEQUENCE_LENGTH,  # 4M tokens.
+            input_partition_type=DataPartitionType.DATA,
+            # 1 batch per DP replica
+            train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
+            max_sequence_length=MAX_SEQUENCE_LENGTH,
             max_step=500_000,  # 2T tokens // 4M tokens/step.
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
@@ -68,6 +94,10 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 (
                     "gpu-(p5.48xlarge|p4de.24xlarge)-(256|512|1024)",
                     mesh_shape_from_axes(data=-1, fsdp=8),
+                ),
+                (   
+                    "neuron-(trn1.32xlarge|trn1n.32xlarge)-(32|64|256|512|1024)",
+                    mesh_shape_from_axes(data=-1, model=TRN_MODEL_AXIS_SIZE),
                 ),
             ),
         )
@@ -117,7 +147,7 @@ def model_config(
         hidden_dim=hidden_dim,
         num_heads=num_heads,
         vocab_size=vocab_size,
-        stack_cfg=RepeatedTransformerLayer.default_config(),
+        stack_cfg=StackedTransformerLayer.default_config(), # Repeated transformer layer breaks Neuron
         activation_fn=activation_fn,
         ffn_dim=ffn_dim,
         normalization=RMSNorm.default_config().set(eps=1e-5, forward_dtype=None),

@@ -94,6 +94,7 @@ from axlearn.common.utils import (
     get_or_none,
     shapes,
     split_prng_key,
+    with_sharding_constraint,
 )
 
 NEG_INF = -1e15
@@ -289,9 +290,15 @@ def make_segment_mask(*, source_segments: Tensor, target_segments: Tensor) -> Te
         value at [..., i, j] = 0 if target_segments[..., i] == source_segments[..., j], or -inf
         otherwise.
     """
-    target_segments = jnp.expand_dims(target_segments, -1)
-    source_segments = jnp.expand_dims(source_segments, -2)
-    res = (jax.lax.ne(source_segments, target_segments) * NEG_INF)[:, None, ...]
+    # target_segments = jnp.expand_dims(target_segments, -1)
+    # source_segments = jnp.expand_dims(source_segments, -2)
+    # res = (jax.lax.ne(source_segments, target_segments) * NEG_INF)[:, None, ...]
+
+    target_segments = jnp.asarray(target_segments, dtype=jnp.bfloat16)[:, None]
+    source_segments = jnp.asarray(source_segments, dtype=jnp.bfloat16)[..., None]
+    #res = jnp.asarray((jax.lax.eq(source_segments, target_segments))[:, None, ...], dtype=jnp.bfloat16)
+    res = jnp.asarray((jax.lax.ne(source_segments, target_segments) * NEG_INF)[:, None, ...], dtype=jnp.bfloat16)
+
     return res
 
 
@@ -1104,6 +1111,7 @@ def apply_rotary_position_embeddings(
         Rotary position affined value embeddings with shape [batch_size, seq_len, num_heads, dim]
             if rotary_value == True, else original value embeddings
     """
+    return query, key, value
     # sin [batch_size, num_heads, sequence_length, embed_size_per_head//2]
     # cos [batch_size, num_heads, sequence_length, embed_size_per_head//2]
     sin, cos = jnp.split(sinusoidal_pos, 2, axis=-1)
@@ -1617,6 +1625,7 @@ class MultiheadAttention(BaseLayer):
             value=value,
             attention_logit_biases=attention_logit_biases,
         )
+        output = with_sharding_constraint(output, PartitionSpec('data', None, None))
         return output
 
     def _cap_logits(self, logits: Tensor) -> Tensor:
@@ -2963,8 +2972,10 @@ def set_double_shard_weights_config(
         ff_layer.linear1.param_partition_spec = (fsdp_axis_names, tp_axis_names)
         ff_layer.linear2.param_partition_spec = (tp_axis_names, fsdp_axis_names)
         # Encourage the right activation sharding.
-        ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
-        ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        #ff_layer.linear1.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        #ff_layer.linear2.output_partition_spec = (batch_axis_names, seq_axis_names, tp_axis_names)
+        ff_layer.linear1.output_partition_spec = (batch_axis_names, None, tp_axis_names)
+        ff_layer.linear2.output_partition_spec = (batch_axis_names, None, None)
 
     if not isinstance(cfg, Sequence):
         cfg = [cfg]
@@ -3611,7 +3622,11 @@ class CausalAttentionLogitBiasLayer(AttentionLogitBiasLayer):
     def forward(self, *, segment_ids: Tensor, positions: Tensor) -> Tensor:
         """Refer to AttentionLogitBiasLayer.forward for docstring."""
         # Note: padding tokens are not explicitly masked.
-        causal_bias = (positions[:, None, :, None] < positions[:, None, None, :]) * NEG_INF
+        #causal_bias = (positions[:, None, :, None] < positions[:, None, None, :]) * NEG_INF
+        causal_bias = jnp.asarray(
+        (positions[:, None, :, None] < positions[:, None, None, :]) * NEG_INF,
+        dtype=jnp.bfloat16
+        )
         return apply_attention_logit_biases(
             causal_bias, make_segment_mask(source_segments=segment_ids, target_segments=segment_ids)
         )

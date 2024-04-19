@@ -38,7 +38,7 @@ python3 -m axlearn.common.launch_trainer_main \
 """
 
 from typing import Dict
-
+from axlearn.common.checkpointer import Checkpointer
 from axlearn.common.config import InstantiableConfig, config_for_function
 from axlearn.common.input_lm import lm_text_preprocessor
 from axlearn.common.trainer import SpmdTrainer
@@ -107,6 +107,7 @@ def named_trainer_configs() -> Dict[str, TrainerConfigFn]:
     # Make a variant of fuji-7B that can run on a single machine with 8 80G GPUs.
     # pytype: disable=annotation-type-mismatch
     cfg: SpmdTrainer.Config = config_map["fuji-7B"]().clone()
+    cfg.checkpointer=Checkpointer.default_config() # Async checkpointer needs distributed init
     # pytype: enable=annotation-type-mismatch
     cfg.input.batcher.global_batch_size = 32
     for evaler in cfg.evalers.values():

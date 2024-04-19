@@ -319,15 +319,22 @@ class RMSNorm(BaseNormalizationLayer):
         }
 
     def forward(self, x: Tensor, *, paddings: Optional[Tensor] = None) -> Tensor:
+        x = with_sharding_constraint(x, PartitionSpec('data', 'model', None))
         del paddings  # paddings do not affect LayerNorm results
         cfg = self.config
         x_dtype = x.dtype
         if cfg.forward_dtype is not None:
             x = x.astype(cfg.forward_dtype)
         moment2 = (x * x).mean(axis=-1, keepdims=True)
-        x = x * jax.lax.rsqrt(moment2 + cfg.eps)
+        # moment2 = self._remat_name(moment2, 'moment2')
+        sqrt = jax.lax.rsqrt(moment2 + cfg.eps)
+        # sqrt = self._remat_name(sqrt, 'sqrt')
+        x = x * sqrt
+        # x = self._remat_name(x, 'sqrt_mul')
         x = x.astype(x_dtype)
         x = x * self.parameters["scale"]
+        # x = self._remat_name(x, 'output')
+        x = with_sharding_constraint(x, PartitionSpec('data', None, None))
         return x
 
 
@@ -1236,8 +1243,12 @@ class Embedding(BaseLayer):
         )
 
     def forward(self, x: Tensor) -> Tensor:
+        x = with_sharding_constraint(x, PartitionSpec('data', None))
         emb = self.parameters["weight"]
-        return emb[x]
+        emb = with_sharding_constraint(emb, PartitionSpec('model', None))
+        activation = emb[x]
+        activation = with_sharding_constraint(activation, PartitionSpec('data', None, None))
+        return activation
 
     def attend(self, x: Tensor) -> Tensor:
         """Apply query array 'x' to the embedding weight array.

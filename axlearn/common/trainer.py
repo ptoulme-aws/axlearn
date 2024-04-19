@@ -34,6 +34,7 @@ from axlearn.common.utils import (
     NestedPartitionSpec,
     NestedTensor,
     PartitionSpec,
+    DataPartitionType,
     Tensor,
     count_model_params,
     flatten_items,
@@ -76,6 +77,10 @@ class SpmdTrainer(Module):
 
         # The input source.
         input: Required[InstantiableConfig] = REQUIRED
+
+        # The input partition:
+        # Options: FULL (default), DATA, REPLICATED
+        input_partition_type: Required[DataPartitionType] = DataPartitionType.DATA
 
         # A summary writer to log tagged summary values.
         summary_writer: BaseWriter.Config = SummaryWriter.default_config()
@@ -151,6 +156,9 @@ class SpmdTrainer(Module):
         # If > 0, run a watchdog thread to print the thread stack traces if step does not
         # increment within this interval.
         watchdog_timeout_seconds: Optional[float] = None
+
+        # Microbatches for gradient accumulation
+        gradient_accumulation_microbatches: Optional[int] = 1
 
     def __init__(
         self,
@@ -262,7 +270,7 @@ class SpmdTrainer(Module):
 
     def _train_step_input_partition_specs(self):
         # By default, each input tensor is fully partitioned along the batch axis.
-        return utils.input_partition_spec()
+        return utils.input_partition_spec(self.config.input_partition_type)
 
     def model_params_for_eval(self):
         state = self.trainer_state
@@ -433,7 +441,7 @@ class SpmdTrainer(Module):
                     self._step = self._step + 1
                     self.vlog(3, "Start step %s", self.step)
                     output = self._run_step(
-                        utils.host_to_global_device_array(input_batch),
+                        utils.host_to_global_device_array(input_batch, partition=cfg.input_partition_type),
                         force_run_evals=force_run_eval_sets_at_max_step
                         if self.step >= cfg.max_step
                         else None,
@@ -897,7 +905,33 @@ class SpmdTrainer(Module):
 
         # By default `value_and_grad` only computes gradients on the first arg,
         # `model_parameters_grad`.
-        forward_and_grad = jax.value_and_grad(_forward, has_aux=True)
+        _forward_and_grad = jax.value_and_grad(_forward, has_aux=True)
+
+        num_microbatches =  self.config.gradient_accumulation_microbatches
+        if num_microbatches > 1:
+            input_batch = jax.tree_map(lambda x: x.reshape(num_microbatches, -1, *x.shape[1:]), input_batch)
+            input_batch = jax.tree_util.tree_map(
+                lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, 'data', *([None for _ in range(len(x.shape) - 2)]))),
+                input_batch
+            )
+
+            def _copy_zero(model_tree):
+                return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
+
+            def _forward_ga(model_parameters_grad, model_parameters_no_grad, forward_input_batch):
+                def run_microbatch(grad_buffer, microbatch):
+                    metrics, microbatch_grads = _forward_and_grad(model_parameters_grad, model_parameters_no_grad, microbatch)
+                    # accumulate gradients
+                    grad_buffer = jax.tree_map(lambda x, y: x + y, microbatch_grads, grad_buffer)
+                    return grad_buffer, metrics
+
+                grad_buffer = _copy_zero(model_parameters_grad)
+                grad_buffer, metrics = jax.lax.scan(run_microbatch, grad_buffer, forward_input_batch)
+                return metrics, grad_buffer
+            forward_and_grad = jax.jit(_forward_ga)
+        else:
+            forward_and_grad = _forward_and_grad
+
         dummy_value = None
         model_parameters_grad = jax.tree_util.tree_map(
             lambda compute_gradients, v: v if compute_gradients else dummy_value,
