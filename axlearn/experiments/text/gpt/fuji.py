@@ -37,7 +37,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     if model_size == "test":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=32,
+                num_layers=4,
                 hidden_dim=4096,
                 #ffn_dim=scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=16),
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
@@ -52,7 +52,8 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
             max_sequence_length=2048,
             train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
             max_step=20000,
-            mesh_shape=mesh_shape_from_axes(data=jax.device_count()/TRN_MODEL_AXIS_SIZE, model=TRN_MODEL_AXIS_SIZE),
+            mesh_shape=mesh_shape_from_axes(data=-1, model=TRN_MODEL_AXIS_SIZE),
+            gradient_accumulation_microbatches=GRADIENT_ACCUMULATION_MICROBATCHES,
             mesh_rules=(
                 # tpu-v4. step time: 3.03s.
                 ("tpu-v4-(1024|2048)", mesh_shape_from_axes(data=-1, fsdp=16)),
@@ -83,6 +84,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
             # 1 batch per DP replica
             train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
             max_sequence_length=MAX_SEQUENCE_LENGTH,
+            gradient_accumulation_microbatches=GRADIENT_ACCUMULATION_MICROBATCHES,
             max_step=500_000,  # 2T tokens // 4M tokens/step.
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(

@@ -45,13 +45,13 @@ def setup(
 
     global _jax_distributed_initialized  # pylint: disable=global-statement
     if not _jax_distributed_initialized:
-        if jax_backend == "tpu":
+        if jax_backend == "tpu" or jax_backend == "neuron":
             if not (
                 distributed_coordinator is None and num_processes is None and process_id is None
             ):
                 raise ValueError(
                     "distributed_coordinator, num_processes, and process_id "
-                    "should all be None for tpu backend."
+                    "should all be None for tpu or neuron backend."
                 )
             jax.distributed.initialize()
         else:

@@ -63,7 +63,8 @@ export XLA_USE_BF16=1
 #export NEURON_CC_FLAGS="--internal-print-debug-output --dump=./compiler_dump --framework=XLA --model-type transformer --internal-io-to-internal-dmacopy-insertion --enable-mixed-precision-accumulation -O1"
 export NEURON_CC_FLAGS="--dump=./compiler_dump_8node --framework=XLA --model-type transformer --no-internal-hlo-remat --distribution-strategy=llm-training --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=8' --enable-mixed-precision-accumulation -O1"
 export NEURON_RT_STOCHASTIC_ROUNDING_EN=1
-export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=5
+export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=2 # debug
+# export NEURON_RT_LOG_LEVEL_NRT=DEBUG # debug
 export NEURON_WHILE_LOOP_UNROLL=1
 export JAX_TRACEBACK_FILTERING=off # this enables verbose frame logging in jax
 

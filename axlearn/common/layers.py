@@ -326,14 +326,14 @@ class RMSNorm(BaseNormalizationLayer):
         if cfg.forward_dtype is not None:
             x = x.astype(cfg.forward_dtype)
         moment2 = (x * x).mean(axis=-1, keepdims=True)
-        # moment2 = self._remat_name(moment2, 'moment2')
+        moment2 = self._remat_name(moment2, 'moment2')
         sqrt = jax.lax.rsqrt(moment2 + cfg.eps)
-        # sqrt = self._remat_name(sqrt, 'sqrt')
+        sqrt = self._remat_name(sqrt, 'sqrt')
         x = x * sqrt
-        # x = self._remat_name(x, 'sqrt_mul')
+        x = self._remat_name(x, 'sqrt_mul')
         x = x.astype(x_dtype)
         x = x * self.parameters["scale"]
-        # x = self._remat_name(x, 'output')
+        x = self._remat_name(x, 'output')
         x = with_sharding_constraint(x, PartitionSpec('data', None, None))
         return x
 

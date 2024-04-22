@@ -1596,6 +1596,7 @@ class MultiheadAttention(BaseLayer):
         probs = self.dropout(probs)
         context = jnp.einsum("bnts,bsnh->btnh", probs, v_proj).astype(v_proj.dtype)
         context = self._remat_name(context, "context")
+        probs = self._remat_name(probs, "probs")
         return context, probs
 
     def forward(
@@ -2159,9 +2160,12 @@ class TransformerAttentionLayer(BaseLayer):
 
         if cfg.structure == "prenorm":
             skip_input = target  # pre-norm: where normalization happens within the residual part.
+            skip_input = self._remat_name(skip_input, 'residual_skip')
             norm_target = self.norm(target)
+            norm_target = self._remat_name(norm_target, 'attention_norm')
             atten_state, atten_output = attention_thunk(norm_target)
             data = skip_input + self.stochastic_depth(self.dropout(atten_output.data))
+            data = self._remat_name(data, 'residual_add')
         elif cfg.structure == "postnorm":
             # This is the structure used by the original Transformer, BERT, and RoBERTa.
             atten_state, atten_output = attention_thunk(target)
@@ -2436,8 +2440,10 @@ class TransformerFeedForwardLayer(BaseLayer):
 
         remat_pt1 = "activation"
         remat_pt2 = "linear2"
+        inputs = self._remat_name(inputs, 'residual_input')
         if cfg.structure == "prenorm":
             x = self.norm(inputs)
+            x = self._remat_name(x, 'mlp_norm')
             x = self._linear1_activation(x)
             x = self._remat_name(x, remat_pt1)
             x = self.dropout1(x)
@@ -2448,6 +2454,7 @@ class TransformerFeedForwardLayer(BaseLayer):
             if cfg.residual_weight != 1:
                 x *= cfg.residual_weight
             x += inputs
+            x=self._remat_name(x, 'mlp_residual')
         elif cfg.structure == "postnorm":
             x = self._linear1_activation(inputs)
             x = self._remat_name(x, remat_pt1)
@@ -3566,6 +3573,21 @@ def build_remat_spec(
     if stack_cfg.klass is PipelinedTransformerLayer:
         return None
     attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
+    mlp_name = stack_cfg.layer.feed_forward.klass.__name__
+    if jax.default_backend() == 'neuron':
+        return RematSpec(
+            prevent_cse=stack_cfg.klass is StackedTransformerLayer,
+            # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
+            # or Repeated Conformers) we can enable common subexpression elimination optimizations.
+            policy=config_for_function(jax_remat_policies.save_only_these_names).set(
+                names_which_can_be_saved=(
+                    [f"{attention_name}.{el}"
+                    for el in ["q_proj", "k_proj", "v_proj", "context"]] +
+                    [f"{mlp_name}.{el}" for el in ["activation", "linear2"]]
+                )
+            ),
+        )
+
     return RematSpec(
         prevent_cse=stack_cfg.klass is StackedTransformerLayer,
         # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
