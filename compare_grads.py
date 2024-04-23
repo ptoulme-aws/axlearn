@@ -29,17 +29,22 @@ def compare_grads(folder_name, rtol=1e-2, atol=1e-4):
                 # Load data from both files
                 with open(neuron_file, 'rb') as fn, open(cpu_file, 'rb')as fc:
                     print(f"neuron file {neuron_file} cpu_file {cpu_file}")
-                    while True:
-                        print("inside loop")
-                        neuron_data = jnp.load(fn, allow_pickle=True)
-                        # print(neuron_data)
-                        # trn_data = np.load(trn_file)
-                        cpu_data = jnp.load(fc, allow_pickle=True)
+                    try:
+                        while True:
+                            print("inside loop")
+                            neuron_data = jnp.load(fn, allow_pickle=True)
+                            # print(neuron_data)
+                            # trn_data = np.load(trn_file)
+                            cpu_data = jnp.load(fc, allow_pickle=True)
 
-                        # Check if data from both files are close enough
-                        close_enough = jnp.allclose(neuron_data, cpu_data, rtol=rtol, atol=atol)
+                            # Check if data from both files are close enough
+                            close_enough = jnp.allclose(neuron_data, cpu_data, rtol=rtol, atol=atol)
 
-                        print(f"{neuron_data} {cpu_file} layer allclose check: {close_enough}")
+                            print(f"{neuron_file} {cpu_file} layer allclose check: {close_enough}")
+
+                            print(neuron_data - cpu_data)
+                    except EOFError as e:
+                        print(e)
 
 if __name__ == "__main__":
     grads_folder = sys.argv[1]
