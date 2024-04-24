@@ -81,7 +81,8 @@ def named_trainer_configs() -> Dict[str, TrainerConfigFn]:
         DataMixtureComponent(
             name="c4/en:3.0.1",
             split="train",
-            shuffle_buffer_size=8192,
+            # shuffle_buffer_size=8192,
+            shuffle_buffer_size=0,
             weight=1.0,
         ),
     ]

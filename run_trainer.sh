@@ -15,7 +15,7 @@ echo "==============================================="
 # rm -rf /shared/apoorvgu/fs_drop/axlearn/compiler_dump
 # rm -rf /shared/apoorvgu/fs_drop/axlearn/jax_dump
 # rm -rf /shared/apoorvgu/fs_drop/axlearn/jax4_dump
-OUTPUT_DIR=/shared_new/ptoulme/fs_drop/axlearn/out/
+OUTPUT_DIR=/shared_new/mengchiy/fs_drop/axlearn/out/
 # DATA_DIR=FAKE
 DATA_DIR=gs://axlearn-public/tensorflow_datasets
 python3 -m axlearn.common.launch_trainer_main \
