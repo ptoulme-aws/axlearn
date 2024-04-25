@@ -63,7 +63,8 @@ EVAL_EVERY_N_STEPS = 5_000
 
 # We typically use bfloat16 as the step dtype,
 # (but usually keep parameters and optimizer state in float32).
-STEP_DTYPE = jnp.bfloat16
+# STEP_DTYPE = jnp.bfloat16
+STEP_DTYPE = jnp.float32
 
 
 # The default mesh-axis names for LM training, from least to most communication intensive.
@@ -226,7 +227,7 @@ def model_config(
         vocab_size=vocab_size,
         emb=emb_cfg,
         dropout_rate=dropout_rate,
-        lm_head=LmHead.default_config().set(dtype=jnp.bfloat16)
+        lm_head=LmHead.default_config().set(dtype=jnp.float32)
     )
     # Model.
     model_param_init = DefaultInitializer.default_config().set(
@@ -243,7 +244,8 @@ def model_config(
         batch_axis_names=batch_axis_names,
         seq_axis_names="seq",
     )
-    cfg.dtype = jnp.bfloat16
+    cfg.dtype = jnp.float32
+    # cfg.dtype = jnp.bfloat16
     # Shard some FFN and attention weights over multiple axes.
     set_double_shard_weights_config(
         cfg.decoder.transformer.layer,
@@ -482,7 +484,7 @@ def get_trainer_config_fn(
     evalers: Dict[str, SpmdEvaler.Config],
     mesh_axis_names: Sequence[str] = MESH_AXIS_NAMES,
     mesh_rules: Optional[Sequence[Tuple[str, Optional[MeshShape]]]] = None,
-    eval_every_n_steps: int = 5000,
+    eval_every_n_steps: int = 5,
     eval_batch_size: Optional[int] = None,
     keep_every_n_steps: int = 50_000,
     save_every_n_steps: Optional[int] = None,
@@ -538,6 +540,7 @@ def get_trainer_config_fn(
             evaler_cfg.set(
                 eval_policy=config_for_function(eval_every_n_steps_policy).set(n=eval_every_n_steps)
             )
+            evaler_cfg.set(microbatches=2) # TODO route this from somewhere else
             cfg.evalers[name] = evaler_cfg
         # Summaries and checkpoints.
         cfg.checkpointer.save_policy = config_for_function(every_n_steps_policy).set(

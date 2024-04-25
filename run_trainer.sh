@@ -9,10 +9,10 @@
 # source ${CONDA_HOME}/bin/activate ${CONDA_ENV_NAME}
 
 # VENV
-PY_VENV_PATH="/shared/apoorvgu/jax-21/bin/activate"
+PY_VENV_PATH="/shared_new/ptoulme/axlearn/venv/bin/activate"
 source ${PY_VENV_PATH}
 
-NEURON_DUMP_PATH=${PWD}/neuron_dump
+NEURON_DUMP_PATH=${PWD}/neuron2_dump
 HLO_DUMP_PATH=${PWD}/hlo_dump
 
 # Install runtime and collectives library. This is only needed in internal dev cluster
@@ -55,9 +55,13 @@ export FI_LOG_LEVEL="warn"
 export FI_EFA_USE_DEVICE_RDMA="1"
 export FI_PROVIDER="efa"
 export FI_EFA_FORK_SAFE=1
+export XLA_FLAGS="--xla_force_host_platform_device_count=32 --xla_dump_hlo_as_text --xla_dump_hlo_as_proto --xla_dump_to=./jax_dump_8node --xla_dump_hlo_pass_re='.*'"
+#export TF_CPP_MIN_LOG_LEVEL=0
+#export TF_CPP_MAX_VLOG_LEVEL=0
 
 OUTPUT_DIR="/shared_new/thangakr/axlearn_out"
 DATA_DIR="gs://axlearn-public/tensorflow_datasets"
+# export JAX_PLATFORMS='cpu'
 # Run the training script
 python3 -m axlearn.common.launch_trainer_main \
     --module=text.gpt.c4_trainer --config=fuji-7B \

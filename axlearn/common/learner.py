@@ -112,6 +112,11 @@ class ForwardBackwardOutputs:
     forward_outputs: ForwardOutputs
     backward_outputs: BackwardOutputs
 
+@dataclasses.dataclass
+class ForwardBackwardOutputsWithGrads:
+    forward_outputs: ForwardOutputs
+    backward_outputs: BackwardOutputs
+    gradients: Nested[Tensor]
 
 class ForwardFn(Protocol):
     """Represents the model forward function."""
@@ -394,9 +399,10 @@ class Learner(BaseLearner):
             gradients=gradients,
             state_updates=forward_outputs.output_collection.state_updates,
         )
-        return ForwardBackwardOutputs(
+        return ForwardBackwardOutputsWithGrads(
             forward_outputs=forward_outputs,
             backward_outputs=BackwardOutputs(updated_params=updated_params),
+            gradients=gradients
         )
 
 
@@ -455,7 +461,7 @@ class AccumulatedLearner(Learner):
 
     def forward_and_backward(
         self, *, fn: ForwardFn, inputs: NestedTensor, opt_params: NestedOptParam
-    ) -> ForwardBackwardOutputs:
+    ) -> ForwardBackwardOutputsWithGrads:
         should_compute_gradients = self.should_update_with_optimizers(opt_params)
         model_params = jax.tree_util.tree_map(lambda opt_param: opt_param.value, opt_params)
 
@@ -488,10 +494,15 @@ class AccumulatedLearner(Learner):
             gradients=gradient_buffer,
             state_updates=forward_outputs.output_collection.state_updates,
         )
-        return ForwardBackwardOutputs(
+        return ForwardBackwardOutputsWithGrads(
             forward_outputs=forward_outputs,
             backward_outputs=BackwardOutputs(updated_params=updated_params),
+            gradients=gradient_buffer
         )
+        # return ForwardBackwardOutputs(
+        #     forward_outputs=forward_outputs,
+        #     backward_outputs=BackwardOutputs(updated_params=updated_params),
+        # )
 
 class CompositeLearner(BaseLearner):
     """The composite learner supports different sub learners on different subset of parameters.

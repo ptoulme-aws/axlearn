@@ -780,7 +780,32 @@ class SpmdTrainer(Module):
         with jax.profiler.StepTraceAnnotation("train", step_num=self.step):
             # Note(Jan 2022):
             # pjit currently requires all parameters to be specified as positional args.
-            self._trainer_state, outputs = self._jit_train_step(self._trainer_state, input_batch)
+            self._trainer_state, outputs, gradients = self._jit_train_step(self._trainer_state, input_batch)
+
+
+        # from jaxlib.xla_extension import ArrayImpl
+        # def append_weight(file, state_stack):
+        #     if not isinstance(state_stack, ArrayImpl) and len(state_stack.keys()) != 0:
+        #         for key in state_stack.keys():
+        #             append_weight(file, state_stack[key])
+        #     else:
+        #         if len(state_stack) != 0:
+        #             jnp.save(file, state_stack)
+
+        if self.step < 4:
+            logging.info(gradients['decoder']['transformer']['layer0']['feed_forward']['linear1_0']['weight'])
+            
+        #     with open("updated_states_" + jax.default_backend() + "_step" + str(self.step) + ".npy", 'wb') as f:
+        #         logging.info("before append")
+        #         append_weight(f, self._trainer_state.model)
+        #         logging.info("after append")
+        #         # jnp.save(f, flattened_states)
+        #         # jnp.save(f, self._trainer_state.model['decoder']['transformer']['layer0']['feed_forward']['linear1_0']['weight'])
+
+        #     # with open("updated_states_" + jax.default_backend() + "_step" + str(self.step) + ".npy", 'wb') as f:
+        #     #     jnp.save(f, self._trainer_state.model['decoder']['transformer']['layer0']['feed_forward']['linear1_0']['weight'])
+            # with open("loss_" + jax.default_backend() + "_step" + str(self.step) + ".npy", 'wb') as f:
+            #     jnp.save(f, outputs["loss"])
 
         if self.step % 100 == 0 or 0 <= self.step <= 5:
             self._step_log(
@@ -844,6 +869,7 @@ class SpmdTrainer(Module):
                     loss=None,
                     aux=None,
                 ),
+                self._trainer_state_partition_specs.model
             ),
             donate_argnums=(0,),  # donate the state
         )
@@ -914,6 +940,7 @@ class SpmdTrainer(Module):
         )
         forward_outputs: ForwardOutputs = fwd_bwd_outputs.forward_outputs
         updated_model_params = fwd_bwd_outputs.backward_outputs.updated_params
+        gradients = fwd_bwd_outputs.gradients
         updated_state = TrainerState(
             prng_key=new_prng_key,
             model=updated_model_params,
@@ -928,7 +955,7 @@ class SpmdTrainer(Module):
             summaries=summaries,
             loss=forward_outputs.loss,
             aux=forward_outputs.aux,
-        )
+        ), gradients
 
     def _maybe_stop_or_start_tracing(
         self, stop_trace_step: Optional[int], output: Optional[Dict[str, Any]]

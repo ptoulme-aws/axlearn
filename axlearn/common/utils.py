@@ -617,8 +617,8 @@ def host_to_global_device_array(
             raise ValueError(f"({x.shape}) cannot be sharded across {data_dimension} data axis.") 
 
         sharding = jax.sharding.NamedSharding(mesh, partition_spec)
-        return [jax.device_put(x[index].numpy(), d)
-                for d, index in sharding.addressable_devices_indices_map(x.shape).items()]
+        return [jax.device_put(x[index].numpy() if not isinstance(x[index], np.ndarray) else x[index], d)
+            for d, index in sharding.addressable_devices_indices_map(x.shape).items()]
 
     def put_to_devices_replicated(x: Tensor) -> List[Tensor]:
         # Replicate `x` to every local device.

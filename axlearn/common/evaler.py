@@ -40,6 +40,7 @@ from axlearn.common.metrics import MetricAccumulator, WeightedScalar
 from axlearn.common.module import Module, OutputCollection
 from axlearn.common.module import functional as F
 from axlearn.common.utils import (
+    DataPartitionType,
     NestedPartitionSpec,
     NestedTensor,
     Tensor,
@@ -47,7 +48,7 @@ from axlearn.common.utils import (
     replicate_to_local_data,
     with_sharding_constraint,
 )
-
+from jax.sharding import PartitionSpec
 
 class BaseMetricCalculator(Module):
     """The base class of classes to calculate evaluation metrics.
@@ -197,11 +198,11 @@ class BaseMetricCalculator(Module):
             in_shardings=(
                 self._model_param_partition_specs,  # model_params.
                 None,  # replicated_inputs (e.g., prng_key).
-                utils.input_partition_spec(),  # per_example_inputs.
+                utils.input_partition_spec(partition=DataPartitionType.FULL if jax.default_backend() != 'neuron' else DataPartitionType.DATA),  # per_example_inputs.
             ),
             out_shardings=dict(
                 replicated=None,
-                per_example=utils.input_partition_spec(),
+                per_example=utils.input_partition_spec(DataPartitionType.FULL if jax.default_backend() != 'neuron' else DataPartitionType.DATA),
             ),
         )
 
@@ -315,13 +316,21 @@ class ModelSummaryAccumulator(BaseMetricCalculator):
         """Calls `self._model` and returns summaries."""
         cfg = self.config
         next_key, forward_prng = jax.random.split(prng_key)
-        model_outputs, model_output_collection = self._call_model(
-            method=cfg.model_method,
-            prng_key=forward_prng,
-            model_params=model_params,
-            input_batch=input_batch,
-            **cfg.model_method_kwargs,
+        #TODO route accumulation through config
+        inputs = jax.tree_map(lambda x: x.reshape(2,  -1, *x.shape[1:]), input_batch)
+        inputs = jax.tree_util.tree_map(
+            lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, 'data', *([None for _ in range(len(x.shape) - 2)]))), inputs
         )
+        def run_microbatch(_, microbatch):
+            model_outputs, model_output_collection = self._call_model(
+                method=cfg.model_method,
+                prng_key=forward_prng,
+                model_params=model_params,
+                input_batch=microbatch,
+                **cfg.model_method_kwargs,
+            )
+            return None, (model_outputs, model_output_collection)
+        _, (model_outputs, model_output_collection) = jax.lax.scan(run_microbatch, None, inputs)
         return dict(
             replicated=dict(
                 prng_key=next_key,
@@ -569,6 +578,8 @@ class SpmdEvaler(Module):
         metric_calculator: BaseMetricCalculator.Config = ModelSummaryAccumulator.default_config()
         # If not None, writes input batches and `metric_calculator` forward outputs.
         output_writer: Optional[BaseOutputWriter.Config] = None
+        # Number of microbatches to run at once
+        microbatches: Required[int] = REQUIRED
 
     def __init__(
         self,
@@ -685,12 +696,15 @@ class SpmdEvaler(Module):
 
             with jax.profiler.StepTraceAnnotation(cfg.name, step_num=step):
                 with jax.profiler.TraceAnnotation(f"{cfg.name}.forward"):
-                    global_input_batch = utils.host_to_global_device_array(input_batch)
+                    input_partition = DataPartitionType.FULL if jax.default_backend() != 'neuron' else DataPartitionType.DATA
+                    global_input_batch = utils.host_to_global_device_array(input_batch, partition=input_partition)
+
                     forward_outputs = self.metric_calculator.forward(
-                        global_input_batch,
-                        model_params=model_params,
-                        state=metric_calculator_state,
+                            global_input_batch,
+                            model_params=model_params,
+                            state=metric_calculator_state,
                     )
+
                 metric_calculator_state = forward_outputs["state"]
                 all_metric_calculator_outputs.append(forward_outputs["output"])
                 if "output_writer" in self.children:
