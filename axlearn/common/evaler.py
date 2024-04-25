@@ -46,6 +46,7 @@ from axlearn.common.utils import (
     input_partition_spec,
     replicate_to_local_data,
     with_sharding_constraint,
+    DataPartitionType,
 )
 
 
@@ -83,6 +84,10 @@ class BaseMetricCalculator(Module):
         # Cast float inputs and parameters to this dtype for the evaluation step.
         # If None, do not cast.
         eval_dtype: Optional[jnp.dtype] = None
+
+        # the input partition type:
+        # Options: FULL (default), DATA, REPLICATED
+        input_partition_type: Required[DataPartitionType] = DataPartitionType.DATA
 
         # Optional prefix for formatting metric name on tensorboard. User can call
         # `self.formatted_metric_name` to format the metric names to group them in the same tab.
@@ -197,11 +202,11 @@ class BaseMetricCalculator(Module):
             in_shardings=(
                 self._model_param_partition_specs,  # model_params.
                 None,  # replicated_inputs (e.g., prng_key).
-                utils.input_partition_spec(),  # per_example_inputs.
+                utils.input_partition_spec(self.config.input_partition_type),  # per_example_inputs.
             ),
             out_shardings=dict(
                 replicated=None,
-                per_example=utils.input_partition_spec(),
+                per_example=utils.input_partition_spec(self.config.input_partition_type),
             ),
         )
 
@@ -554,6 +559,9 @@ class SpmdEvaler(Module):
 
         # The input source.
         input: Required[InstantiableConfig] = REQUIRED
+        # The input partition:
+        # Options: FULL (default), DATA, REPLICATED
+        input_partition_type: Required[DataPartitionType] = DataPartitionType.DATA
         # A summary writer to log tagged summary values.
         summary_writer: InstantiableConfig = summary_writer.SummaryWriter.default_config()
         # Run this evaler according to this policy.
@@ -685,7 +693,7 @@ class SpmdEvaler(Module):
 
             with jax.profiler.StepTraceAnnotation(cfg.name, step_num=step):
                 with jax.profiler.TraceAnnotation(f"{cfg.name}.forward"):
-                    global_input_batch = utils.host_to_global_device_array(input_batch)
+                    global_input_batch = utils.host_to_global_device_array(input_batch, partition=cfg.input_partition_type)
                     forward_outputs = self.metric_calculator.forward(
                         global_input_batch,
                         model_params=model_params,

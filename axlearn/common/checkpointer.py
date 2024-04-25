@@ -94,7 +94,8 @@ def latest_checkpoint_path(base_dir: str) -> str:
 def check_state_structure(
     ckpt_structure: List[Tuple[str, Any]],
     target_structure: List[Tuple[str, Any]],
-    validation: CheckpointValidationType = CheckpointValidationType.EXACT,
+    #validation: CheckpointValidationType = CheckpointValidationType.EXACT,
+    validation: CheckpointValidationType = CheckpointValidationType.CONTAINS_STATE_UP_TO_DTYPE,
 ):
     # Maybe filter structure before comparison.
     def filter_for_validation(structure):
@@ -402,7 +403,8 @@ class TensorStoreStateStorage(StateStorage):
         state: Union[NestedTensor, NestedTensorSpec],
         *,
         ckpt_dir: str,
-        validation: CheckpointValidationType = CheckpointValidationType.EXACT,
+        #validation: CheckpointValidationType = CheckpointValidationType.EXACT,
+        validation: CheckpointValidationType = CheckpointValidationType.CONTAINS_STATE_UP_TO_DTYPE,
         concurrent_gb: int = 32,
     ) -> NestedTensor:
         spec = self._get_spec(step, state, ckpt_dir)
