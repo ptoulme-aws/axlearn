@@ -66,7 +66,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 num_heads=32,
                 vocab_size=32000,
             ),
-            learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
+            learner_kwargs=dict(peak_lr=6e-5, weight_decay=6e-7),
             input_partition_type=DataPartitionType.DATA,
             # 1 batch per DP replica
             train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
