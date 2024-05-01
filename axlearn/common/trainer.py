@@ -780,7 +780,15 @@ class SpmdTrainer(Module):
         with jax.profiler.StepTraceAnnotation("train", step_num=self.step):
             # Note(Jan 2022):
             # pjit currently requires all parameters to be specified as positional args.
+            # import numpy
+            # rng = numpy.random.default_rng(self.step)
+            # input_batch['input_ids'] = rng.integers(0,2048,input_batch['input_ids'].shape)
+            # input_batch['target_labels'] = rng.integers(0,2048,input_batch['target_labels'].shape)
+            logging.warning("input_batch is %s", input_batch)
             self._trainer_state, outputs = self._jit_train_step(self._trainer_state, input_batch)
+            logging.warning("outputs is %s", outputs)
+            if self.step % 10 == 0:
+                logging.warning("self._trainer_state is %s", self._trainer_state)
 
         if self.step % 100 == 0 or 0 <= self.step <= 5:
             self._step_log(

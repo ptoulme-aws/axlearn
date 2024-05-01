@@ -28,11 +28,11 @@ import os
 
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
-TRN_MODEL_AXIS_SIZE=8
-GRADIENT_ACCUMULATION_MICROBATCHES=8
+TRN_MODEL_AXIS_SIZE=2
+GRADIENT_ACCUMULATION_MICROBATCHES=1
 
 # Adjust Neuron compiler flags for gradient accumulation
-os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=" + str(GRADIENT_ACCUMULATION_MICROBATCHES) + '\''
+# os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=" + str(GRADIENT_ACCUMULATION_MICROBATCHES) + '\''
 
 def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     """Construct default trainer kwargs given a model size."""
@@ -61,7 +61,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=32,
+                num_layers=4,
                 hidden_dim=128 * 32,
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=32,
@@ -72,7 +72,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
             # 1 batch per DP replica
             train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
             max_sequence_length=MAX_SEQUENCE_LENGTH,
-            max_step=500_000,  # 2T tokens // 4M tokens/step.
+            max_step=10,  # 2T tokens // 4M tokens/step.
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
                 # tpu-v4. step time: 3.03s.
@@ -91,6 +91,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
             ),
             eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),
             eval_every_n_steps=5000,
+            save_every_n_steps=10,
         )
         print("batch size is ", trainer_kwargs["train_batch_size"])
     else:

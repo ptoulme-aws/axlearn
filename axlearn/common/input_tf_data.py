@@ -249,7 +249,7 @@ def tfds_dataset(
     Raises:
         ValueError: if train_shuffle_buffer_size is None when is_training=True.
     """
-    if is_training:
+    if False:
         if train_shuffle_buffer_size is None:
             raise ValueError("train_shuffle_buffer_size is required when is_training=True")
         shuffle_files = (
