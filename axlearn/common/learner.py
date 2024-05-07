@@ -459,6 +459,14 @@ class AccumulatedLearner(Learner):
         should_compute_gradients = self.should_update_with_optimizers(opt_params)
         model_params = jax.tree_util.tree_map(lambda opt_param: opt_param.value, opt_params)
 
+        shape = jax.eval_shape(fn,
+            model_params=model_params,
+            inputs=inputs,
+        )
+        outputs_buffer = jax.tree_util.tree_map(
+            lambda sd: jnp.zeros(sd.shape, sd.dtype), shape)
+        print("outputs_buffer is", outputs_buffer)
+
         # create evenly sized accumulation microbatches, keep sequence dimension as it is.
         inputs = jax.tree_map(lambda x: x.reshape(self.config.microbatches,  -1, *x.shape[1:]), inputs)
         inputs = jax.tree_util.tree_map(
@@ -469,31 +477,32 @@ class AccumulatedLearner(Learner):
             return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
 
         def run_microbatch(gradient_buffer, microbatch):
-
+            gradient_buffer, forward_outputs_buffer = gradient_buffer
             forward_outputs, microbatch_gradients = _value_and_grad(
                 fn,
                 model_params=model_params,
                 inputs=microbatch,
                 should_compute_gradients=should_compute_gradients,
             )
-
             # accumulate gradients
             gradient_buffer = jax.tree_map(lambda x, y: x + y, microbatch_gradients, gradient_buffer)
-            return gradient_buffer, forward_outputs
+            forward_outputs_buffer = jax.tree_map(lambda x, y: x + y, forward_outputs, forward_outputs_buffer)
+            return (gradient_buffer, forward_outputs_buffer), None
 
         gradient_buffer = _copy_zero(opt_params)
-        gradient_buffer, forward_outputs = jax.lax.scan(run_microbatch, gradient_buffer, inputs)
+        (gradient_buffer, output_buffer), _ = jax.lax.scan(run_microbatch, (gradient_buffer,outputs_buffer) , inputs)
 
-        # Average gradients
+        # Average gradients and metrics
         gradient_buffer = jax.tree_map(lambda x: x / self.config.microbatches, gradient_buffer)
+        output_buffer = jax.tree_map(lambda x: x / self.config.microbatches, output_buffer)
 
         updated_params = self.update(
             model_params=opt_params,
             gradients=gradient_buffer,
-            state_updates=forward_outputs.output_collection.state_updates,
+            state_updates=output_buffer.output_collection.state_updates,
         )
         return ForwardBackwardOutputs(
-            forward_outputs=forward_outputs,
+            forward_outputs=output_buffer,
             backward_outputs=BackwardOutputs(updated_params=updated_params),
         )
 
