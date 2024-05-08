@@ -443,6 +443,7 @@ class SpmdTrainer(Module):
 
                     self._step = self._step + 1
                     self.vlog(3, "Start step %s", self.step)
+
                     output = self._run_step(
                         utils.host_to_global_device_array(input_batch, partition=cfg.input_partition_type),
                         force_run_evals=force_run_eval_sets_at_max_step
@@ -780,6 +781,19 @@ class SpmdTrainer(Module):
         with jax.profiler.StepTraceAnnotation("train", step_num=self.step):
             # Note(Jan 2022):
             # pjit currently requires all parameters to be specified as positional args.
+
+            # c = jax.xla_computation(self._jit_train_step)(self._trainer_state, input_batch)
+            # print("HLOL:",c.as_hlo_text()) 
+            # trainer_state_size = 0
+
+            # def fn(x):
+            #     global trainer_state_size
+            #     trainer_state_size += x.nbytes
+            #     return x
+
+            # print("trainer_state_size", trainer_state_size)
+            # jax.tree_util.tree_map(fn,self._trainer_state)
+
             self._trainer_state, outputs = self._jit_train_step(self._trainer_state, input_batch)
 
         if self.step % 100 == 0 or 0 <= self.step <= 5:

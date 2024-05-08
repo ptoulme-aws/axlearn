@@ -23,6 +23,7 @@ from axlearn.experiments.text.gpt.common import STEP_DTYPE, learner_config, mesh
 from axlearn.experiments.text.gpt.common import model_config as common_model_config
 from axlearn.experiments.text.gpt.common import scaled_hidden_dim
 from axlearn.common.utils import DataPartitionType
+from axlearn.common.learner import GeometricMeanStrategy
 import jax
 import os
 
@@ -33,6 +34,7 @@ GRADIENT_ACCUMULATION_MICROBATCHES=8
 
 # Adjust Neuron compiler flags for gradient accumulation
 os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=" + str(GRADIENT_ACCUMULATION_MICROBATCHES) + '\''
+# os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo'"
 
 def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     """Construct default trainer kwargs given a model size."""
@@ -61,18 +63,18 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=32,
+                num_layers=2,
                 hidden_dim=128 * 32,
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=32,
                 vocab_size=32000,
             ),
-            learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
+            learner_kwargs=dict(peak_lr=6e-5, weight_decay=6e-7),
             input_partition_type=DataPartitionType.DATA,
             # 1 batch per DP replica
             train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
             max_sequence_length=MAX_SEQUENCE_LENGTH,
-            max_step=500_000,  # 2T tokens // 4M tokens/step.
+            max_step=10000,  # 2T tokens // 4M tokens/step.
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
                 # tpu-v4. step time: 3.03s.
@@ -101,6 +103,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     trainer_kwargs["learner_cfg"] = learner_config(
         max_step=trainer_kwargs["max_step"],
         gradient_accumulation_microbatches=GRADIENT_ACCUMULATION_MICROBATCHES,
+        metrics_accumulation_key_ops=("bits_per_byte", GeometricMeanStrategy),
         **trainer_kwargs.pop("learner_kwargs"),
     )
     # pylint: enable=use-dict-literal

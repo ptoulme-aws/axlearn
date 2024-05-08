@@ -444,11 +444,52 @@ def _mask_tree(tree: dict, *, keep: dict) -> dict:
         tree,
     )
 
+# def accumulate_metrics(self, pytree_path, x, buffer):
+#     AccumulationOp = self.ArithmeticMeanStrategy(self.config.microbatches)
+#     MetricOpMap = self.config.metrics_accumulation_key_ops
+#     if pytree_path in MetricOpMap:
+#         AccumulationOp = MetricOpMap[pytree_path]
+#     return AccumulationOp.aggregrate(x, buffer)
+
+# def normalize_metrics(self, pytree_path, buffer):
+#     AccumulationOp = self.ArithmeticMeanStrategy(self.config.microbatches)
+#     MetricOpMap = self.config.metrics_accumulation_key_ops
+#     if pytree_path in MetricOpMap:
+#         AccumulationOp = MetricOpMap[pytree_path]
+#     return AccumulationOp.normalize(buffer)
+
+# class MetricAccumulationRules(enum.Enum):
+#     AVG = "arithmetic_mean"
+#     GM = "geometric_mean"
+
+class MetricsAccumulationOp(NamedTuple):
+    microbatches: int
+
+    def aggregrate(self, x, buffer):
+        raise NotImplementedError
+    def normalize(self, buffer):
+        raise NotImplementedError
+
+class ArithmeticMeanStrategy(MetricsAccumulationOp):
+    def aggregrate(self, x, buffer):
+        return buffer + x
+    def normalize(self, buffer):
+        return buffer / self.microbatches
+
+class GeometricMeanStrategy(MetricsAccumulationOp):
+    def aggregrate(self, x, buffer):
+        return buffer * x
+    def normalize(self, buffer):
+        return buffer ** (-self.microbatches)
+
 class AccumulatedLearner(Learner):
+
     @config_class
     class Config(Learner.Config):
         """Configures Learner."""
         microbatches: Required[int] = REQUIRED  # The optimizer config.
+        # metrics_accumulation_key_ops: Optional[dict]
+        metrics_accumulation_key_ops: Sequence[Tuple[str, Optional[MetricsAccumulationOp]]] = []
 
     def __init__(self, cfg: Config, *, parent: Module):
         super().__init__(cfg, parent=parent)
@@ -456,6 +497,11 @@ class AccumulatedLearner(Learner):
     def forward_and_backward(
         self, *, fn: ForwardFn, inputs: NestedTensor, opt_params: NestedOptParam
     ) -> ForwardBackwardOutputs:
+
+        # avg = ArithmeticMeanStrategy(self.config.microbatches)
+        # gm = eometricMeanStrategy(self.config.microbatches)
+        print("metrics_accumulation_key_ops is", self.config.metrics_accumulation_key_ops)
+
         should_compute_gradients = self.should_update_with_optimizers(opt_params)
         model_params = jax.tree_util.tree_map(lambda opt_param: opt_param.value, opt_params)
 
@@ -467,6 +513,28 @@ class AccumulatedLearner(Learner):
             lambda sd: jnp.zeros(sd.shape, sd.dtype), shape)
         print("outputs_buffer is", outputs_buffer)
 
+        def MetricAccumulationRulesToCallable(pytree_path, x):
+            opMap = self.config.metrics_accumulation_key_ops
+            print("pytree_path", pytree_path)
+            print("opMap", opMap)
+            if pytree_path in opMap:
+                print("dict index", opMap[pytree_path])
+                return GeometricMeanStrategy(self.config.microbatches).aggregrate
+            return ArithmeticMeanStrategy(self.config.microbatches).aggregrate
+
+        def MetricAccumulationRulesToCallable1(pytree_path, x):
+            opMap = self.config.metrics_accumulation_key_ops
+            print("pytree_path", pytree_path)
+            print("opMap", opMap)
+            if pytree_path in opMap:
+                print("dict index", opMap[pytree_path])
+                return GeometricMeanStrategy(self.config.microbatches).normalize
+            return ArithmeticMeanStrategy(self.config.microbatches).normalize
+
+        metric_accumulation_map = jax.tree_util.tree_map_with_path(MetricAccumulationRulesToCallable, outputs_buffer)
+        metric_accumulation_map1 = jax.tree_util.tree_map_with_path(MetricAccumulationRulesToCallable1, outputs_buffer)
+        print("metric_accumulation_map", metric_accumulation_map)
+        
         # create evenly sized accumulation microbatches, keep sequence dimension as it is.
         inputs = jax.tree_map(lambda x: x.reshape(self.config.microbatches,  -1, *x.shape[1:]), inputs)
         inputs = jax.tree_util.tree_map(
@@ -486,15 +554,24 @@ class AccumulatedLearner(Learner):
             )
             # accumulate gradients
             gradient_buffer = jax.tree_map(lambda x, y: x + y, microbatch_gradients, gradient_buffer)
-            forward_outputs_buffer = jax.tree_map(lambda x, y: x + y, forward_outputs, forward_outputs_buffer)
+            forward_outputs_buffer = jax.tree_util.tree_map_with_path(lambda accumulation_strategy,x,y: accumulation_strategy(x,y), 
+                                                                      metric_accumulation_map, 
+                                                                      forward_outputs, 
+                                                                      forward_outputs_buffer)
             return (gradient_buffer, forward_outputs_buffer), None
 
         gradient_buffer = _copy_zero(opt_params)
-        (gradient_buffer, output_buffer), _ = jax.lax.scan(run_microbatch, (gradient_buffer,outputs_buffer) , inputs)
+        (gradient_buffer, output_buffer), _ = jax.lax.scan(run_microbatch, (gradient_buffer, outputs_buffer), inputs)
 
         # Average gradients and metrics
         gradient_buffer = jax.tree_map(lambda x: x / self.config.microbatches, gradient_buffer)
-        output_buffer = jax.tree_map(lambda x: x / self.config.microbatches, output_buffer)
+        # output_buffer = jax.tree_util.tree_map_with_path(lambda accumulation_strategy,x: accumulation_strategy.normalize(x),
+        #                                                  metric_accumulation_map, 
+        #                                                  output_buffer)
+        output_buffer = jax.tree_util.tree_map_with_path(lambda accumulation_strategy,x: accumulation_strategy(x),
+                                                         metric_accumulation_map1, 
+                                                         output_buffer)
+        # output_buffer = jax.tree_util.tree_map_with_path(self.normalize_metrics, output_buffer)
 
         updated_params = self.update(
             model_params=opt_params,
