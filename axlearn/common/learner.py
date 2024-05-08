@@ -9,7 +9,7 @@
 
 import dataclasses
 import enum
-from typing import Callable, Mapping, Optional, Protocol, Sequence, Tuple, NamedTuple
+from typing import Callable, Mapping, Optional, Protocol, Sequence, Tuple, NamedTuple, Dict
 
 import jax
 import optax
@@ -444,24 +444,6 @@ def _mask_tree(tree: dict, *, keep: dict) -> dict:
         tree,
     )
 
-# def accumulate_metrics(self, pytree_path, x, buffer):
-#     AccumulationOp = self.ArithmeticMeanStrategy(self.config.microbatches)
-#     MetricOpMap = self.config.metrics_accumulation_key_ops
-#     if pytree_path in MetricOpMap:
-#         AccumulationOp = MetricOpMap[pytree_path]
-#     return AccumulationOp.aggregrate(x, buffer)
-
-# def normalize_metrics(self, pytree_path, buffer):
-#     AccumulationOp = self.ArithmeticMeanStrategy(self.config.microbatches)
-#     MetricOpMap = self.config.metrics_accumulation_key_ops
-#     if pytree_path in MetricOpMap:
-#         AccumulationOp = MetricOpMap[pytree_path]
-#     return AccumulationOp.normalize(buffer)
-
-# class MetricAccumulationRules(enum.Enum):
-#     AVG = "arithmetic_mean"
-#     GM = "geometric_mean"
-
 class MetricsAccumulationOp(NamedTuple):
     microbatches: int
 
@@ -489,7 +471,7 @@ class AccumulatedLearner(Learner):
         """Configures Learner."""
         microbatches: Required[int] = REQUIRED  # The optimizer config.
         # metrics_accumulation_key_ops: Optional[dict]
-        metrics_accumulation_key_ops: Sequence[Tuple[str, Optional[MetricsAccumulationOp]]] = []
+        metrics_accumulation_key_ops: Sequence[Dict[str, Optional[MetricsAccumulationOp]]] = []
 
     def __init__(self, cfg: Config, *, parent: Module):
         super().__init__(cfg, parent=parent)
@@ -513,28 +495,30 @@ class AccumulatedLearner(Learner):
             lambda sd: jnp.zeros(sd.shape, sd.dtype), shape)
         print("outputs_buffer is", outputs_buffer)
 
-        def MetricAccumulationRulesToCallable(pytree_path, x):
+        def get_strategy_for_metric(pytree_path):
             opMap = self.config.metrics_accumulation_key_ops
-            print("pytree_path", pytree_path)
+            print("pytree_path", pytree_path, "\n ", pytree_path[0])
             print("opMap", opMap)
-            if pytree_path in opMap:
-                print("dict index", opMap[pytree_path])
-                return GeometricMeanStrategy(self.config.microbatches).aggregrate
-            return ArithmeticMeanStrategy(self.config.microbatches).aggregrate
 
-        def MetricAccumulationRulesToCallable1(pytree_path, x):
-            opMap = self.config.metrics_accumulation_key_ops
-            print("pytree_path", pytree_path)
-            print("opMap", opMap)
-            if pytree_path in opMap:
-                print("dict index", opMap[pytree_path])
-                return GeometricMeanStrategy(self.config.microbatches).normalize
-            return ArithmeticMeanStrategy(self.config.microbatches).normalize
+            pytree_str = ""
+            for key in pytree_path:
+                print("str key is", str(key))
+                pytree_str += str(key)
+            print("pytree str is", pytree_str)
+            
+            if pytree_str in opMap:
+                print("dict index", opMap[pytree_str])
+                return opMap[pytree_str](self.config.microbatches)
+            return ArithmeticMeanStrategy(self.config.microbatches)
 
-        metric_accumulation_map = jax.tree_util.tree_map_with_path(MetricAccumulationRulesToCallable, outputs_buffer)
-        metric_accumulation_map1 = jax.tree_util.tree_map_with_path(MetricAccumulationRulesToCallable1, outputs_buffer)
-        print("metric_accumulation_map", metric_accumulation_map)
-        
+        def MetricAggregationRule(pytree_path, x, y):
+            strategy = get_strategy_for_metric(pytree_path)
+            return strategy.aggregrate(x,y)
+
+        def MetricNormalizationRule(pytree_path, x):
+            strategy = get_strategy_for_metric(pytree_path)
+            return strategy.normalize(x)
+
         # create evenly sized accumulation microbatches, keep sequence dimension as it is.
         inputs = jax.tree_map(lambda x: x.reshape(self.config.microbatches,  -1, *x.shape[1:]), inputs)
         inputs = jax.tree_util.tree_map(
@@ -554,10 +538,7 @@ class AccumulatedLearner(Learner):
             )
             # accumulate gradients
             gradient_buffer = jax.tree_map(lambda x, y: x + y, microbatch_gradients, gradient_buffer)
-            forward_outputs_buffer = jax.tree_util.tree_map_with_path(lambda accumulation_strategy,x,y: accumulation_strategy(x,y), 
-                                                                      metric_accumulation_map, 
-                                                                      forward_outputs, 
-                                                                      forward_outputs_buffer)
+            forward_outputs_buffer = jax.tree_util.tree_map_with_path(MetricAggregationRule, forward_outputs, forward_outputs_buffer)
             return (gradient_buffer, forward_outputs_buffer), None
 
         gradient_buffer = _copy_zero(opt_params)
@@ -565,13 +546,7 @@ class AccumulatedLearner(Learner):
 
         # Average gradients and metrics
         gradient_buffer = jax.tree_map(lambda x: x / self.config.microbatches, gradient_buffer)
-        # output_buffer = jax.tree_util.tree_map_with_path(lambda accumulation_strategy,x: accumulation_strategy.normalize(x),
-        #                                                  metric_accumulation_map, 
-        #                                                  output_buffer)
-        output_buffer = jax.tree_util.tree_map_with_path(lambda accumulation_strategy,x: accumulation_strategy(x),
-                                                         metric_accumulation_map1, 
-                                                         output_buffer)
-        # output_buffer = jax.tree_util.tree_map_with_path(self.normalize_metrics, output_buffer)
+        output_buffer = jax.tree_util.tree_map_with_path(MetricNormalizationRule, output_buffer)
 
         updated_params = self.update(
             model_params=opt_params,
@@ -901,3 +876,6 @@ def _value_and_grad(
     result, grads = jax.value_and_grad(forward, has_aux=True)(*split_params, inputs)
     loss, (aux, output_collection) = result
     return ForwardOutputs(loss=loss, aux=aux, output_collection=output_collection), grads
+
+
+# metric_accumulation_map ForwardOutputs(loss=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>, aux={}, output_collection=OutputCollection(summaries={'accuracy': WeightedScalar(mean=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>, weight=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>), 'bits_per_byte': WeightedScalar(mean=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>, weight=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>), 'cross_entropy_loss': WeightedScalar(mean=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>, weight=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>), 'decoder': {'attention_mask': {}, 'emb': {'dropout': {}, 'token_emb': {}}, 'lm_head': {}, 'output_dropout': {}, 'output_norm': {}, 'transformer': {'layer0': {'feed_forward': {'dropout1': {}, 'dropout2': {}, 'linear1_0': {}, 'linear1_1': {}, 'linear2': {}, 'norm': {}, 'stochastic_depth': {}}, 'self_attention': {'attention': {'dropout': {}, 'i_proj': {'i_proj': {'qkv_proj': {}}, 'rope_pos_emb_layer': {}}, 'o_proj': {}, 'scale_key': {}, 'scale_query': {}}, 'dropout': {}, 'norm': {}, 'stochastic_depth': {}}}, 'layer1': {'feed_forward': {'dropout1': {}, 'dropout2': {}, 'linear1_0': {}, 'linear1_1': {}, 'linear2': {}, 'norm': {}, 'stochastic_depth': {}}, 'self_attention': {'attention': {'dropout': {}, 'i_proj': {'i_proj': {'qkv_proj': {}}, 'rope_pos_emb_layer': {}}, 'o_proj': {}, 'scale_key': {}, 'scale_query': {}}, 'dropout': {}, 'norm': {}, 'stochastic_depth': {}}}}}, 'loss': WeightedScalar(mean=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>, weight=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>), 'perplexity': WeightedScalar(mean=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>, weight=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>), 'train_live_targets': WeightedScalar(mean=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>, weight=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>), 'z_loss': WeightedScalar(mean=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>, weight=<bound method ArithmeticMeanStrategy.aggregrate of ArithmeticMeanStrategy(microbatches=8)>)}, state_updates={'decoder': {'attention_mask': {}, 'emb': {'dropout': {}, 'token_emb': {}}, 'lm_head': {}, 'output_dropout': {}, 'output_norm': {}, 'transformer': {'layer0': {'feed_forward': {'dropout1': {}, 'dropout2': {}, 'linear1_0': {}, 'linear1_1': {}, 'linear2': {}, 'norm': {}, 'stochastic_depth': {}}, 'self_attention': {'attention': {'dropout': {}, 'i_proj': {'i_proj': {'qkv_proj': {}}, 'rope_pos_emb_layer': {}}, 'o_proj': {}, 'scale_key': {}, 'scale_query': {}}, 'dropout': {}, 'norm': {}, 'stochastic_depth': {}}}, 'layer1': {'feed_forward': {'dropout1': {}, 'dropout2': {}, 'linear1_0': {}, 'linear1_1': {}, 'linear2': {}, 'norm': {}, 'stochastic_depth': {}}, 'self_attention': {'attention': {'dropout': {}, 'i_proj': {'i_proj': {'qkv_proj': {}}, 'rope_pos_emb_layer': {}}, 'o_proj': {}, 'scale_key': {}, 'scale_query': {}}, 'dropout': {}, 'norm': {}, 'stochastic_depth': {}}}}}}, module_outputs={'decoder': {'attention_mask': {}, 'emb': {'dropout': {}, 'token_emb': {}}, 'lm_head': {}, 'output_dropout': {}, 'output_norm': {}, 'transformer': {'layer0': {'feed_forward': {'dropout1': {}, 'dropout2': {}, 'linear1_0': {}, 'linear1_1': {}, 'linear2': {}, 'norm': {}, 'stochastic_depth': {}}, 'self_attention': {'attention': {'dropout': {}, 'i_proj': {'i_proj': {'qkv_proj': {}}, 'rope_pos_emb_layer': {}}, 'o_proj': {}, 'scale_key': {}, 'scale_query': {}}, 'dropout': {}, 'norm': {}, 'stochastic_depth': {}}}, 'layer1': {'feed_forward': {'dropout1': {}, 'dropout2': {}, 'linear1_0': {}, 'linear1_1': {}, 'linear2': {}, 'norm': {}, 'stochastic_depth': {}}, 'self_attention': {'attention': {'dropout': {}, 'i_proj': {'i_proj': {'qkv_proj': {}}, 'rope_pos_emb_layer': {}}, 'o_proj': {}, 'scale_key': {}, 'scale_query': {}}, 'dropout': {}, 'norm': {}, 'stochastic_depth': {}}}}}}))

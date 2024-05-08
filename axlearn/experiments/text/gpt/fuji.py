@@ -103,7 +103,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     trainer_kwargs["learner_cfg"] = learner_config(
         max_step=trainer_kwargs["max_step"],
         gradient_accumulation_microbatches=GRADIENT_ACCUMULATION_MICROBATCHES,
-        metrics_accumulation_key_ops=("bits_per_byte", GeometricMeanStrategy),
+        metrics_accumulation_key_ops={".output_collection.summaries['bits_per_byte'].mean": GeometricMeanStrategy},
         **trainer_kwargs.pop("learner_kwargs"),
     )
     # pylint: enable=use-dict-literal
