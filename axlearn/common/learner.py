@@ -448,9 +448,9 @@ class MetricsAccumulationOp(NamedTuple):
     microbatches: int
 
     def aggregrate(self, x, buffer):
-        raise NotImplementedError
+        raise NotImplementedError(self)
     def normalize(self, buffer):
-        raise NotImplementedError
+        raise NotImplementedError(self)
 
 class ArithmeticMeanStrategy(MetricsAccumulationOp):
     def aggregrate(self, x, buffer):
@@ -476,7 +476,6 @@ class AccumulatedLearner(Learner):
     class Config(Learner.Config):
         """Configures Learner."""
         microbatches: Required[int] = REQUIRED  # The optimizer config.
-        # metrics_accumulation_key_ops: Optional[dict]
         metrics_accumulation_key_ops: Sequence[Dict[str, Optional[MetricsAccumulationOp]]] = []
 
     def __init__(self, cfg: Config, *, parent: Module):
