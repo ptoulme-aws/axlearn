@@ -464,6 +464,12 @@ class GeometricMeanStrategy(MetricsAccumulationOp):
     def normalize(self, buffer):
         return buffer ** (-self.microbatches)
 
+class AddStrategy(MetricsAccumulationOp):
+    def aggregrate(self, x, buffer):
+        return buffer + x
+    def normalize(self, buffer):
+        return buffer
+
 class AccumulatedLearner(Learner):
 
     @config_class
@@ -480,10 +486,6 @@ class AccumulatedLearner(Learner):
         self, *, fn: ForwardFn, inputs: NestedTensor, opt_params: NestedOptParam
     ) -> ForwardBackwardOutputs:
 
-        # avg = ArithmeticMeanStrategy(self.config.microbatches)
-        # gm = eometricMeanStrategy(self.config.microbatches)
-        print("metrics_accumulation_key_ops is", self.config.metrics_accumulation_key_ops)
-
         should_compute_gradients = self.should_update_with_optimizers(opt_params)
         model_params = jax.tree_util.tree_map(lambda opt_param: opt_param.value, opt_params)
 
@@ -493,18 +495,12 @@ class AccumulatedLearner(Learner):
         )
         outputs_buffer = jax.tree_util.tree_map(
             lambda sd: jnp.zeros(sd.shape, sd.dtype), shape)
-        print("outputs_buffer is", outputs_buffer)
 
         def get_strategy_for_metric(pytree_path):
             opMap = self.config.metrics_accumulation_key_ops
-            print("pytree_path", pytree_path, "\n ", pytree_path[0])
-            print("opMap", opMap)
-
             pytree_str = ""
             for key in pytree_path:
-                print("str key is", str(key))
                 pytree_str += str(key)
-            print("pytree str is", pytree_str)
             
             if pytree_str in opMap:
                 print("dict index", opMap[pytree_str])
