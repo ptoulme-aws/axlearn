@@ -30,7 +30,7 @@ import os
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
 TRN_MODEL_AXIS_SIZE=8
-GRADIENT_ACCUMULATION_MICROBATCHES=4
+GRADIENT_ACCUMULATION_MICROBATCHES=8
 
 # Adjust Neuron compiler flags for gradient accumulation
 if jax.default_backend() == 'neuron':
@@ -72,12 +72,12 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 num_heads=32,
                 vocab_size=32000,
             ),
-            learner_kwargs=dict(peak_lr=6e-5, weight_decay=6e-7),
+            learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
             input_partition_type=DataPartitionType.DATA,
             # 1 batch per DP replica
             train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
             max_sequence_length=MAX_SEQUENCE_LENGTH,
-            max_step=10000,  # 2T tokens // 4M tokens/step.
+            max_step=500_000,  # 2T tokens // 4M tokens/step.
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
                 # tpu-v4. step time: 3.03s.
@@ -95,7 +95,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 ),
             ),
             eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),
-            eval_every_n_steps=50000,
+            eval_every_n_steps=5000,
         )
         print("batch size is ", trainer_kwargs["train_batch_size"])
     else:
