@@ -269,7 +269,7 @@ def learner_config(
     peak_lr: float,
     max_step: int,
     weight_decay: float,
-    lr_warmup_steps: int = 1,
+    lr_warmup_steps: int = 2000,
     alpha: float = 0.1,
     b1: float = 0.9,
     b2: float = 0.95,
