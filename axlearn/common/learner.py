@@ -526,7 +526,7 @@ class AccumulatedLearner(Learner):
         )
 
         def _copy_zero(model_tree):
-            return jax.tree_map(lambda x: jnp.full_like(x, 0), model_tree)
+            return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.bfloat16), model_tree)
 
         def run_microbatch(gradient_buffer, microbatch):
             gradient_buffer, forward_outputs_buffer = gradient_buffer
@@ -536,6 +536,8 @@ class AccumulatedLearner(Learner):
                 inputs=microbatch,
                 should_compute_gradients=should_compute_gradients,
             )
+            microbatch_gradients = jax.tree_map(lambda x: x.astype(jnp.bfloat16), microbatch_gradients)
+
             # accumulate gradients
             gradient_buffer = jax.tree_map(lambda x, y: x + y, microbatch_gradients, gradient_buffer)
             forward_outputs_buffer = jax.tree_util.tree_map_with_path(MetricAggregationRule, forward_outputs, forward_outputs_buffer)

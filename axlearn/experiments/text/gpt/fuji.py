@@ -30,11 +30,13 @@ import os
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
 TRN_MODEL_AXIS_SIZE=8
-GRADIENT_ACCUMULATION_MICROBATCHES=8
+GRADIENT_ACCUMULATION_MICROBATCHES=4
 
 # Adjust Neuron compiler flags for gradient accumulation
-os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=" + str(GRADIENT_ACCUMULATION_MICROBATCHES) + '\''
-# os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo'"
+if GRADIENT_ACCUMULATION_MICROBATCHES > 1:
+    os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=" + str(GRADIENT_ACCUMULATION_MICROBATCHES) + '\''
+else:
+    os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo'"
 
 def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     """Construct default trainer kwargs given a model size."""
@@ -63,7 +65,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=2,
+                num_layers=32,
                 hidden_dim=128 * 32,
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=32,
@@ -92,7 +94,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 ),
             ),
             eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),
-            eval_every_n_steps=5000,
+            eval_every_n_steps=50000,
         )
         print("batch size is ", trainer_kwargs["train_batch_size"])
     else:
