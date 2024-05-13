@@ -9,13 +9,12 @@
 
 import dataclasses
 import enum
-from typing import Callable, Mapping, Optional, Protocol, Sequence, Tuple, NamedTuple, Dict
 import logging
+from typing import Callable, Dict, Mapping, NamedTuple, Optional, Protocol, Sequence, Tuple
 
 import jax
 import optax
 from jax import numpy as jnp
-from jax.sharding import PartitionSpec
 
 from axlearn.common.base_layer import NestedParameterSpec
 from axlearn.common.config import (
@@ -486,8 +485,12 @@ class AccumulatedLearner(Learner):
     class Config(Learner.Config):
         """Configures Learner."""
 
-        microbatches: Required[int] = REQUIRED  # The optimizer config.
+        # The number of microbatches to accumulate per optimizer step.
+        microbatches: Required[int] = REQUIRED
+        # tuple of key-value pairs specifying custom aggregation and normalization
+        # for a specific metric
         metrics_accumulation_key_ops: Sequence[Dict[str, Optional[MetricsAccumulationOp]]] = []
+        gradient_dtype: Optional[jnp.dtype] = jnp.float32
 
     def forward_and_backward(
         self, *, fn: ForwardFn, inputs: NestedTensor, opt_params: NestedOptParam
@@ -495,10 +498,12 @@ class AccumulatedLearner(Learner):
         should_compute_gradients = self.should_update_with_optimizers(opt_params)
         model_params = jax.tree_util.tree_map(lambda opt_param: opt_param.value, opt_params)
 
+        # create buffer for metrics
+        input0 = jax.tree_map(lambda x: x[0], inputs)
         shape = jax.eval_shape(
             fn,
             model_params=model_params,
-            inputs=inputs,
+            inputs=input0,
         )
         outputs_buffer = jax.tree_util.tree_map(lambda sd: jnp.zeros(sd.shape, sd.dtype), shape)
 
@@ -525,19 +530,10 @@ class AccumulatedLearner(Learner):
             strategy = get_strategy_for_metric(pytree_path)
             return strategy.normalize(x)
 
-        # create evenly sized accumulation microbatches, keep sequence dimension as it is.
-        inputs = jax.tree_map(
-            lambda x: x.reshape(self.config.microbatches, -1, *x.shape[1:]), inputs
-        )
-        inputs = jax.tree_util.tree_map(
-            lambda x: jax.lax.with_sharding_constraint(
-                x, PartitionSpec(None, "data", *([None for _ in range(len(x.shape) - 2)]))
-            ),
-            inputs,
-        )
-
         def _copy_zero(model_tree):
-            return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.bfloat16), model_tree)
+            return jax.tree_map(
+                lambda x: jnp.full_like(x, 0, dtype=self.config.gradient_dtype), model_tree
+            )
 
         def run_microbatch(gradient_buffer, microbatch):
             gradient_buffer, forward_outputs_buffer = gradient_buffer
@@ -547,8 +543,9 @@ class AccumulatedLearner(Learner):
                 inputs=microbatch,
                 should_compute_gradients=should_compute_gradients,
             )
+
             microbatch_gradients = jax.tree_map(
-                lambda x: x.astype(jnp.bfloat16), microbatch_gradients
+                lambda x: x.astype(self.config.gradient_dtype), microbatch_gradients
             )
 
             # accumulate gradients

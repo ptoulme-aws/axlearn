@@ -272,7 +272,7 @@ class SpmdTrainer(Module):
 
     def _train_step_input_partition_specs(self):
         # By default, each input tensor is fully partitioned along the batch axis.
-        return utils.input_partition_spec()
+        return utils.data_partition_type_to_spec(accumulation_microbatches=8)
 
     def model_params_for_eval(self):
         state = self.trainer_state
@@ -437,10 +437,10 @@ class SpmdTrainer(Module):
                     self._step = self._step + 1
                     self.vlog(3, "Start step %s", self.step)
                     output = self._run_step(
-                        utils.host_to_global_device_array(input_batch),
-                        force_run_evals=force_run_eval_sets_at_max_step
-                        if self.step >= cfg.max_step
-                        else None,
+                        utils.host_to_global_device_array(input_batch, accumulation_microbatches=8),
+                        force_run_evals=(
+                            force_run_eval_sets_at_max_step if self.step >= cfg.max_step else None
+                        ),
                     )
                     self.vlog(3, "Done step %s", self.step)
                     num_steps += 1

@@ -556,18 +556,34 @@ class DataPartitionType(Enum):
     REPLICATED = "replicated"
 
 
-def data_partition_type_to_spec(partition: DataPartitionType) -> PartitionSpec:
+def data_partition_type_to_spec(
+    *, partition: DataPartitionType = DataPartitionType.FULL, accumulation_microbatches: int = 1
+) -> PartitionSpec:
     """Returns a PartitionSpec for the given partition type."""
     if partition == DataPartitionType.FULL:
-        return input_partition_spec()
+        spec = input_partition_spec()
     elif partition == DataPartitionType.REPLICATED:
-        return None
+        spec = None
     else:
         raise NotImplementedError(f"Unsupported partition: {partition}")
 
+    # Microbatch axis is excluded from sharding.
+    spec = (
+        PartitionSpec(
+            None,
+            tuple(*spec),
+        )
+        if accumulation_microbatches > 1
+        else spec
+    )
+    return spec
+
 
 def host_to_global_device_array(
-    host_arrays: NestedTensor, *, partition: DataPartitionType = DataPartitionType.FULL
+    host_arrays: NestedTensor,
+    *,
+    partition: DataPartitionType = DataPartitionType.FULL,
+    accumulation_microbatches: int = 1,
 ) -> NestedTensor:
     """Converts the given host device arrays to global device arrays.
 
@@ -590,16 +606,48 @@ def host_to_global_device_array(
         NotImplementedError: if the given `partition` type is not supported.
     """
     mesh = maps.thread_resources.env.physical_mesh
-    partition_spec = data_partition_type_to_spec(partition)
+    partition_spec = data_partition_type_to_spec(
+        partition=partition, accumulation_microbatches=accumulation_microbatches
+    )
 
     local_devices = mesh.local_devices
 
+    if accumulation_microbatches > 1:
+
+        def create_microbatches(x):
+            if x.shape[0] % accumulation_microbatches != 0:
+                raise ValueError(
+                    f"({x.shape}) cannot be divded across {accumulation_microbatches} microbatches."
+                )
+            return np.reshape(x, (accumulation_microbatches, -1, *x.shape[1:]))
+
+        # create evenly sized accumulation microbatches.
+        host_arrays = jax.tree_map(create_microbatches, host_arrays)
+
     def put_to_devices_fully_partitioned(x: Tensor) -> List[Tensor]:
         len_local_devices = len(local_devices)
-        if x.shape[0] % len_local_devices != 0:
-            raise ValueError(f"({x.shape}) cannot be sharded across {len_local_devices} devices.")
+
         # np.reshape is faster than np.split, jnp.reshape, and jnp.split.
-        xs = np.reshape(x, (len_local_devices, x.shape[0] // len_local_devices, *x.shape[1:]))
+        if accumulation_microbatches > 1:
+            if x.shape[1] % len_local_devices != 0:
+                raise ValueError(
+                    f"({x.shape}) cannot be sharded across {len_local_devices} devices."
+                )
+            xs = np.reshape(
+                x,
+                (
+                    accumulation_microbatches,
+                    len_local_devices,
+                    x.shape[1] // len_local_devices,
+                    *x.shape[2:],
+                ),
+            )
+        else:
+            if x.shape[0] % len_local_devices != 0:
+                raise ValueError(
+                    f"({x.shape}) cannot be sharded across {len_local_devices} devices."
+                )
+            xs = np.reshape(x, (len_local_devices, x.shape[0] // len_local_devices, *x.shape[1:]))
         return [jax.device_put(x_i, device) for x_i, device in zip(xs, local_devices)]
 
     def put_to_devices_replicated(x: Tensor) -> List[Tensor]:
@@ -620,13 +668,22 @@ def host_to_global_device_array(
     )
 
     def make_gda(x, device_buffers, partition_spec):
+        batch_axis_index = 1 if accumulation_microbatches > 1 else 0
+
         if partition == DataPartitionType.FULL:
-            global_batch_size = x.shape[0] * jax.process_count()
+            global_batch_size = x.shape[batch_axis_index] * jax.process_count()
         elif partition == DataPartitionType.REPLICATED:
-            global_batch_size = x.shape[0]
+            global_batch_size = x.shape[batch_axis_index]
         else:
             raise NotImplementedError(f"Unsupported partition: {partition}")
-        global_shape = tuple([global_batch_size] + list(x.shape[1:]))
+
+        batch_axis_shape = (
+            [accumulation_microbatches, global_batch_size]
+            if accumulation_microbatches > 1
+            else [global_batch_size]
+        )
+        global_shape = tuple(batch_axis_shape + list(x.shape[batch_axis_index + 1 :]))
+
         return jax.make_array_from_single_device_arrays(
             shape=global_shape,
             sharding=jax.sharding.NamedSharding(mesh, partition_spec),
