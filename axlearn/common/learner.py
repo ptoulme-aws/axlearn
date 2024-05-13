@@ -490,11 +490,22 @@ class AccumulatedLearner(Learner):
         # tuple of key-value pairs specifying custom aggregation and normalization
         # for a specific metric
         metrics_accumulation_key_ops: Sequence[Dict[str, Optional[MetricsAccumulationOp]]] = []
-        gradient_dtype: Optional[jnp.dtype] = jnp.float32
+        gradient_dtype: Optional[jnp.dtype] = jnp.bfloat16
 
     def forward_and_backward(
         self, *, fn: ForwardFn, inputs: NestedTensor, opt_params: NestedOptParam
     ) -> ForwardBackwardOutputs:
+        """Run forward and backward for multiple microbatches and accumulate gradients
+        and metrics into buffers.
+
+        Args:
+            fn (ForwardFn): Model forward pass
+            inputs (NestedTensor): input microbatches with a leading microbatch axis
+            opt_params (NestedOptParam): params which don't need gradients
+
+        Returns:
+            ForwardBackwardOutputs: pytree containing gradients and metrics
+        """
         should_compute_gradients = self.should_update_with_optimizers(opt_params)
         model_params = jax.tree_util.tree_map(lambda opt_param: opt_param.value, opt_params)
 

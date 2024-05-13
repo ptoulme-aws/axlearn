@@ -593,7 +593,10 @@ class AccumulatedLearnerTest(TestCase):
             args=(config_for_function(clip_by_global_norm), sgd_cfg),
         )
         cfg = AccumulatedLearner.default_config().set(
-            name="test", optimizer=optimizer_cfg, microbatches=4
+            name="test",
+            optimizer=optimizer_cfg,
+            microbatches=4,
+            gradient_dtype=jnp.float32,
         )
         cfg.ema.decay = ema_decay
         learner: AccumulatedLearner = cfg.instantiate(parent=None)
