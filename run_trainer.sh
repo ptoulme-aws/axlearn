@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+#LOG_FILE="./node_${SLURM_NODEID}_output.log"
+
+#exec >"$LOG_FILE" 2>&1
+echo "The name of this node is: $SLURMD_NODENAME"
+
 # Editable paths
 
 # CONDA
@@ -9,7 +14,7 @@
 # source ${CONDA_HOME}/bin/activate ${CONDA_ENV_NAME}
 
 # VENV
-PY_VENV_PATH="/shared/apoorvgu/jax-21/bin/activate"
+PY_VENV_PATH="/shared_new/ptoulme/axlearn/venv/bin/activate"
 source ${PY_VENV_PATH}
 
 NEURON_DUMP_PATH=${PWD}/neuron_dump
@@ -22,7 +27,7 @@ source ./bigcluster_setup.sh
 # Neuron compiler flags
 export NEURON_CC_FLAGS="--framework=XLA"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --model-type transformer"
-export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --no-internal-hlo-remat"
+#export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --no-internal-hlo-remat"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --distribution-strategy=llm-training"
 # export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=8'" # Set indside fuji.py with gradient_accumulation size
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --enable-mixed-precision-accumulation"
@@ -35,7 +40,9 @@ export NEURON_RUN_TRIVIAL_COMPUTATION_ON_CPU=1
 
 # Neuron runtime flags
 export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=1
-
+#export TF_CPP_MIN_LOG_LEVEL=0
+#export TF_CPP_MAX_VLOG_LEVEL=0
+export NEURON_LIVENESS_DEBUG=1
 # Neuron env vars for distributed training based on SLURM
 nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
 num_nodes=$(echo "$nodes" | wc -l)
@@ -52,8 +59,8 @@ export FI_LOG_LEVEL="warn"
 export FI_EFA_USE_DEVICE_RDMA="1"
 export FI_PROVIDER="efa"
 export FI_EFA_FORK_SAFE=1
-
-OUTPUT_DIR="/shared_new/thangakr/axlearn_out"
+export XLA_FLAGS="--xla_force_host_platform_device_count=32 --xla_dump_hlo_as_text --xla_dump_hlo_as_proto --xla_dump_to=./jax_dump_vlog2 --xla_dump_hlo_pass_re='.*'"
+OUTPUT_DIR="/shared_new/ptoulme/axlearn/job2/"
 DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 # Run the training script
 python3 -m axlearn.common.launch_trainer_main \

@@ -223,7 +223,7 @@ class Pipeline(BaseLayer):
             carry_partition_spec = {}
         if carry_partition_spec is None:
             carry_partition_spec = jax.tree_util.tree_map(
-                lambda x: PartitionSpec(*[PartitionSpec.UNCONSTRAINED for _ in x.shape]), carry
+                lambda x: PartitionSpec(None, None, "model", *[None for _ in x.shape[3:]]), carry
             )
         if xs is None:
             xs = {}
@@ -231,7 +231,7 @@ class Pipeline(BaseLayer):
         if xs_partition_spec is None:
             xs_partition_spec = jax.tree_util.tree_map(
                 lambda x: PartitionSpec(
-                    "pipeline", *[PartitionSpec.UNCONSTRAINED for _ in x.shape[1:]]
+                    "pipeline", None, None, "model", *[None for _ in x.shape[4:]]
                 ),
                 xs,
             )
@@ -241,7 +241,7 @@ class Pipeline(BaseLayer):
             # Pad to shape [M + N - 1, ...].
             v_carry = jnp.pad(v_carry, [(0, n - 1)] + [(0, 0)] * (v_carry.ndim - 1))
             v_carry = with_sharding_constraint(
-                v_carry, PartitionSpec(PartitionSpec.UNCONSTRAINED, *partition_spec[1:])
+                v_carry, PartitionSpec(None, *partition_spec[1:])
             )
             # Expand to shape [M + N - 1, 1, ...].
             v_carry = jnp.expand_dims(v_carry, 1)
@@ -389,8 +389,8 @@ class Pipeline(BaseLayer):
             if ys_partition_spec is None:
                 ys_partition_spec = jax.tree_util.tree_map(
                     lambda x: PartitionSpec(
-                        "pipeline", *[PartitionSpec.UNCONSTRAINED for _ in x.shape[1:]]
-                    ),
+                    "pipeline", None, None, "model", *[None for _ in x.shape[4:]]
+                ),
                     ys,
                 )
             # Transpose from pipeline-major [N + M - 1, N, ...] back to layer-major [N, M, ...].

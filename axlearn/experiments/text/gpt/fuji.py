@@ -16,6 +16,7 @@ from axlearn.common.attention import (
     RepeatedTransformerLayer,
     StackedTransformerLayer,
     RoFormerQKVLinear,
+    PipelinedTransformerLayer
 )
 from axlearn.common.embedding import TransformerTextEmbeddings
 from axlearn.common.layers import RMSNorm
@@ -25,14 +26,15 @@ from axlearn.experiments.text.gpt.common import scaled_hidden_dim
 from axlearn.common.utils import DataPartitionType
 import jax
 import os
-
+jax._src.interpreters.mlir._platforms_with_donation.append('neuron')
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
 TRN_MODEL_AXIS_SIZE=8
-GRADIENT_ACCUMULATION_MICROBATCHES=8
+TRN_PP_AXIS_SIZE=4
+GRADIENT_ACCUMULATION_MICROBATCHES=1
 
 # Adjust Neuron compiler flags for gradient accumulation
-os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=" + str(GRADIENT_ACCUMULATION_MICROBATCHES) + '\''
+os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=8"+ '\''
 
 def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     """Construct default trainer kwargs given a model size."""
@@ -61,16 +63,16 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=32,
-                hidden_dim=128 * 32,
+                num_layers=8,
+                hidden_dim=512,
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=32,
-                vocab_size=32000,
+                vocab_size=8000,
             ),
-            learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
+            learner_kwargs=dict(peak_lr=6e-5, weight_decay=6e-7),
             input_partition_type=DataPartitionType.DATA,
             # 1 batch per DP replica
-            train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
+            train_batch_size=int((jax.device_count()/(TRN_MODEL_AXIS_SIZE*TRN_PP_AXIS_SIZE))*8),
             max_sequence_length=MAX_SEQUENCE_LENGTH,
             max_step=500_000,  # 2T tokens // 4M tokens/step.
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
@@ -86,11 +88,11 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
                 ),
                 (   
                     "neuron-(trn1.32xlarge|trn1n.32xlarge)-(32|64|256|512|1024)",
-                    mesh_shape_from_axes(data=-1, model=TRN_MODEL_AXIS_SIZE),
+                    mesh_shape_from_axes(data=-1, model=TRN_MODEL_AXIS_SIZE, pipeline=TRN_PP_AXIS_SIZE),
                 ),
             ),
-            eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),
-            eval_every_n_steps=5000,
+            eval_batch_size=int(jax.device_count()/(TRN_MODEL_AXIS_SIZE*TRN_PP_AXIS_SIZE)),
+            eval_every_n_steps=500000,
         )
         print("batch size is ", trainer_kwargs["train_batch_size"])
     else:
@@ -140,7 +142,7 @@ def model_config(
         hidden_dim=hidden_dim,
         num_heads=num_heads,
         vocab_size=vocab_size,
-        stack_cfg=StackedTransformerLayer.default_config(),
+        stack_cfg=PipelinedTransformerLayer.default_config().set(num_stages=TRN_PP_AXIS_SIZE, num_microbatches=8),
         activation_fn=activation_fn,
         ffn_dim=ffn_dim,
         normalization=RMSNorm.default_config().set(eps=1e-5, forward_dtype=None),

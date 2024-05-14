@@ -1238,6 +1238,7 @@ class Embedding(BaseLayer):
         )
 
     def forward(self, x: Tensor) -> Tensor:
+        print(f'Embedding input shape {x.shape}')
         x = with_sharding_constraint(x, PartitionSpec('data', None))
         emb = self.parameters["weight"]
         emb = with_sharding_constraint(emb, PartitionSpec('model', None))

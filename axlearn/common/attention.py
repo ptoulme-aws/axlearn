@@ -3492,7 +3492,7 @@ class PipelinedTransformerLayer(BaseStackedTransformerLayer):
             input_dim=cfg.input_dim, layer=cfg.layer, num_layers=num_layers_per_stage
         )
         pipeline_cfg = _TransformerPipeline.default_config().set(
-            layer=stage_cfg, num_layers=cfg.num_stages, num_microbatches=cfg.num_microbatches
+            layer=stage_cfg, num_layers=cfg.num_stages, num_microbatches=cfg.num_microbatches, vlog=0
         )
         self._add_child("pipeline", pipeline_cfg)
 

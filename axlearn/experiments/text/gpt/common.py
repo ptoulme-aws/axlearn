@@ -68,7 +68,7 @@ STEP_DTYPE = jnp.bfloat16
 
 # The default mesh-axis names for LM training, from least to most communication intensive.
 # See mesh_shape_from_axes() docstring for more details.
-MESH_AXIS_NAMES = ("data", "expert", "fsdp", "seq", "model")
+MESH_AXIS_NAMES = ("data", "expert", "fsdp", "seq", "pipeline", "model")
 
 
 def scaled_hidden_dim(scale: float, *, round_up_to_multiples_of: int = 256) -> FunctionConfigBase:
@@ -131,7 +131,7 @@ def tfds_input(
 
 
 def mesh_shape_from_axes(
-    *, data: int = 1, expert: int = 1, fsdp: int = 1, seq: int = 1, model: int = 1
+    *, data: int = 1, expert: int = 1, fsdp: int = 1, seq: int = 1, model: int = 1, pipeline: int = 1
 ) -> Sequence[int]:
     """Builds a 5D logical mesh from the provided spec.
 
@@ -150,9 +150,9 @@ def mesh_shape_from_axes(
     Returns:
         A tuple describing the logical mesh shape (from least to most communication intensive).
     """
-    assert MESH_AXIS_NAMES == ("data", "expert", "fsdp", "seq", "model")
+    #assert MESH_AXIS_NAMES == ("data", "expert", "fsdp", "seq", "model")
     # We set the minimum size for a mesh axis to 1 as anything lower is degenerate, except -1.
-    return tuple((max(x, 1) if x != -1 else -1 for x in [data, expert, fsdp, seq, model]))
+    return tuple((max(x, 1) if x != -1 else -1 for x in [data, expert, fsdp, seq, pipeline, model]))
 
 
 def model_config(
