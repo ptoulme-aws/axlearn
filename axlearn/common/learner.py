@@ -524,7 +524,7 @@ class AccumulatedLearner(Learner):
             for key in pytree_path:
                 pytree_str += str(key)
 
-            if pytree_str in key_op_map:
+            if key_op_map is not None and pytree_str in key_op_map:
                 logging.info(
                     "Found custom rule for metric pytree path %s, rule is %s",
                     pytree_str,
