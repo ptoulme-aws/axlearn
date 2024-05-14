@@ -269,7 +269,7 @@ def learner_config(
     b2: float = 0.95,
     eps: float = 1e-8,
     gradient_accumulation_microbatches: int = 1,
-    metrics_accumulation_key_ops: Dict = {},
+    metrics_accumulation_key_ops: Dict = None,
 ) -> learner.Learner.Config:
     """Build learner using the AdamW optimizer and a cosine lr schedule with linear warmup."""
     update_schedule = config_for_function(schedule.cosine_with_linear_warmup).set(
@@ -297,9 +297,9 @@ def learner_config(
     )
     if gradient_accumulation_microbatches > 1:
         return learner.AccumulatedLearner.default_config().set(
-            optimizer=optimizer_cfg, 
-            microbatches=gradient_accumulation_microbatches, 
-            metrics_accumulation_key_ops=metrics_accumulation_key_ops
+            optimizer=optimizer_cfg,
+            microbatches=gradient_accumulation_microbatches,
+            metrics_accumulation_key_ops=metrics_accumulation_key_ops,
         )
     else:
         return learner.Learner.default_config().set(optimizer=optimizer_cfg)
@@ -484,6 +484,7 @@ def get_trainer_config_fn(
     keep_every_n_steps: int = 50_000,
     save_every_n_steps: Optional[int] = None,
     init_state_builder: Optional[state_builder.Builder.Config] = None,
+    accumulation_microbatches: Optional[int] = None,
 ) -> TrainerConfigFn:
     """Builds a TrainerConfigFn according to the model and input specs.
 
@@ -528,6 +529,7 @@ def get_trainer_config_fn(
                 pad_example_fn=input_tf_data.default_pad_example_fn,
             ),
         )
+        cfg.accumulation_microbatches = accumulation_microbatches
         cfg.evalers = {}
         for name, evaler_cfg in evalers.items():
             evaler_cfg.input.batcher.set(global_batch_size=eval_batch_size or train_batch_size)
