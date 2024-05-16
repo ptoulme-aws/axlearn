@@ -26,7 +26,7 @@ from axlearn.common.utils import DataPartitionType
 from axlearn.common.learner import GeometricMeanStrategy, AddStrategy
 import jax
 import os
-
+jax._src.interpreters.mlir._platforms_with_donation.append('neuron')
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
 TRN_MODEL_AXIS_SIZE=8
@@ -66,7 +66,7 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=32,
+                num_layers=4,
                 hidden_dim=128 * 32,
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=32,

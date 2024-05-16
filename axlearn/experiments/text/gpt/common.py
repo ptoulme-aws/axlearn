@@ -12,7 +12,7 @@ See c4_trainer.py for how they are used.
 
 import math
 from typing import Dict, List, Optional, Sequence, Tuple, Union
-
+from axlearn.common.flash_attention.layer import FlashAttention
 import jax.numpy as jnp
 import tensorflow as tf
 
@@ -204,6 +204,8 @@ def model_config(
         A causal LM config.
     """
     layer_cfg = TransformerLayer.default_config()
+    flash_atten = FlashAttention.default_config().set(causal=True)
+    layer_cfg.self_attention.attention = flash_atten
     # Feed-forward.
     layer_cfg.feed_forward.activation = activation_fn
     layer_cfg.feed_forward.hidden_dim = ffn_dim

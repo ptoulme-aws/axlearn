@@ -89,7 +89,7 @@ def named_trainer_configs() -> Dict[str, TrainerConfigFn]:
     train_input_source = config_for_function(mixture_train_input_source).set(
         data_mixture_components=train_data_mixture_components,
         vocab_cfg=vocab_cfg,
-        preprocessor=config_for_function(lm_text_preprocessor).set(max_padding_fraction=0.5),
+        preprocessor=config_for_function(lm_text_preprocessor).set(max_padding_fraction=0.5, shuffle_buffer_size=0),
     )
 
     config_map = {}

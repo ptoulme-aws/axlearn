@@ -9,7 +9,7 @@
 # source ${CONDA_HOME}/bin/activate ${CONDA_ENV_NAME}
 
 # VENV
-PY_VENV_PATH="/shared/apoorvgu/jax-21/bin/activate"
+PY_VENV_PATH="/shared_new/ptoulme/axlearn/venv/bin/activate"
 source ${PY_VENV_PATH}
 
 NEURON_DUMP_PATH=${PWD}/neuron_dump
@@ -28,11 +28,11 @@ export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --distribution-strategy=llm-training"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --enable-mixed-precision-accumulation"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} -O1"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --dump=${NEURON_DUMP_PATH}"
-
+export XLA_FLAGS="--xla_force_host_platform_device_count=32 --xla_dump_hlo_as_text --xla_dump_hlo_as_proto --xla_dump_to=./jax_dump_vlog2 --xla_dump_hlo_pass_re='.*' --xla_disable_hlo_passes=all-reduce-combiner,all-gather-combiner,reduce-scatter-combiner"
 # Neuron PJRT flags
 export NEURON_WHILE_LOOP_UNROLL=1
 export NEURON_RUN_TRIVIAL_COMPUTATION_ON_CPU=1
-
+export NEURON_LIVENESS_DEBUG=1
 # Neuron runtime flags
 export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=1
 
