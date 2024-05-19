@@ -180,7 +180,6 @@ class FlashAttention(GroupedQueryAttention):
             jnp.empty((batch, num_heads, target_len, source_len)),
             cfg.output_dim_to_partition_spec["bnts"],
         )
-        print(f'Shape: {outputs}')
         return outputs, output_probs
 
 

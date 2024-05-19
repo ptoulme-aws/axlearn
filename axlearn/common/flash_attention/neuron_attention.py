@@ -1188,7 +1188,9 @@ def flash_attn_bwd(
       4.1 Compute dQ
       4.2 Compute dK
   """
-
+  use_causal_mask=True
+  mixed_precision=True
+  dropout_p=0.0
   # Use q_ref dtype as the intermediate tensor dtype
   # Assume all IO tensors have the same dtype
   kernel_dtype = q_ref.dtype
@@ -1226,7 +1228,8 @@ def flash_attn_bwd(
     f"Input sequence length must be divisible by 128, got {seqlen}"
 
   # Softmax scaling factor, multiplied onto Q
-  softmax_scale = softmax_scale or 1.0 / float(d_head ** 0.5)
+  #softmax_scale = softmax_scale or 1.0 / float(d_head ** 0.5)
+  softmax_scale = 1.0 / float(d_head ** 0.5)
 
   # Different batch samples/attention heads have independent attention
   batch_id = nl.program_id(axis=0)
@@ -2260,6 +2263,13 @@ def flash_fwd(q, k, v, seed, o, lse=None,
   B_F_SIZE=512
   B_P_SIZE=128
   b , h, d, n  = q.shape
+  assert isinstance(b, int)
+  assert isinstance(h, int)
+  assert isinstance(d, int)
+  assert isinstance(n, int)
+  use_causal_mask = True
+  assert use_causal_mask==True
+  mixed_precision=True
   B_D_SIZE = d
   k_h = k.shape[1]
   v_shape = v.shape
@@ -2279,7 +2289,8 @@ def flash_fwd(q, k, v, seed, o, lse=None,
   
   batch_id = nl.program_id(axis=0)
   head_id = nl.program_id(axis=1)
-  softmax_scale = softmax_scale or (1.0 / (d ** 0.5))
+  #softmax_scale = softmax_scale or (1.0 / (d ** 0.5))
+  softmax_scale = (1.0 / (d ** 0.5))
 
   LARGE_TILE_SZ = config.seq_tile_size
   assert config.seq_tile_size >= 512, f" seq tile_size {config.seq_tile_size} cannot be less than 512"
@@ -3181,12 +3192,12 @@ def _mha_forward(query, key, value):
     
     # Create the output buffer
     attn_output_shape = jax.ShapeDtypeStruct((batch_size, num_heads, q_seq_len, d_model), dtype=query.dtype)
-    lse_shape = jax.ShapeDtypeStruct((batch_size, num_heads, nl.tile_size.pmax, q_seq_len // nl.tile_size.pmax), dtype=query.dtype)
+    lse_shape = jax.ShapeDtypeStruct((batch_size, num_heads, nl.tile_size.pmax, q_seq_len // nl.tile_size.pmax), dtype=jnp.float32)
     attn_output = jnp.zeros((batch_size, num_heads, q_seq_len, d_model), dtype=query.dtype)
-    lse = jnp.zeros((batch_size, num_heads, nl.tile_size.pmax, q_seq_len // nl.tile_size.pmax), dtype=query.dtype)
+    lse = jnp.zeros((batch_size, num_heads, nl.tile_size.pmax, q_seq_len // nl.tile_size.pmax), dtype=jnp.float32)
     seed = jnp.array([1])
     # Call the NKI kernel using nki_call
-    nki_call(
+    attn_output, lse = nki_call(
         flash_fwd,
         q, k, v, seed, attn_output, lse,
         out_shape=(attn_output_shape, lse_shape),
@@ -3200,20 +3211,18 @@ def _mha_forward(query, key, value):
 #@jax.jit
 def _mha_backward(res, d_attn_output):
     lse, o, q, k, v = res
+    #print(f'Q shape {q.shape}')
+    #print(f'K shape {k.shape}')
+    #print(f'V shape {v.shape}')
     batch_size, q_seq_len, num_heads, d_model = q.shape
     _, kv_seq_len, _, _ = k.shape
 
     # Transpose the input tensors
-    o = o.transpose(0, 2, 1, 3)
-    dy = d_attn_output.transpose(0, 2, 1, 3)
-    # Transpose q tensor
-    q_ref = jnp.transpose(q, axes=(0, 1, 3, 2))
-
-    # Transpose k tensor
-    k_ref = jnp.transpose(k, axes=(0, 1, 3, 2))
+    o = o.transpose(0, 2, 3, 1)
+    dy = d_attn_output.transpose(0, 2, 3, 1)
 
     # Transpose v tensor
-    v_ref = jnp.transpose(v, axes=(0, 1, 3, 2))
+    v = jnp.transpose(v, axes=(0, 1, 3, 2))
     # Create the output buffer shapes
     d_query_shape = jax.ShapeDtypeStruct(q.shape, q.dtype)
     d_key_shape = jax.ShapeDtypeStruct(k.shape, k.dtype)
@@ -3224,17 +3233,21 @@ def _mha_backward(res, d_attn_output):
     seed = jnp.array([1])
 
     # Call the NKI kernel using nki_call
-    nki_call(
+    d_query, d_key, d_value = nki_call(
         flash_attn_bwd,
         q, k, v, o, dy, lse, seed, d_query, d_key, d_value,
         out_shape=[d_query_shape, d_key_shape, d_value_shape],
         grid=(batch_size, num_heads)
     )
+    #print(f'D Query: {d_query.shape}')
+    #print(f'D Key: {d_key.shape}')
+    #print(f'D Value: {d_value.shape}')
 
+    # Batch seq_len heads, head_dim
     # Transpose the gradients back to the original shape
     d_query = d_query.transpose(0, 3, 1, 2)
     d_key = d_key.transpose(0, 3, 1, 2)
-    d_value = d_value.transpose(0, 2, 1, 3)
+    d_value = d_value.transpose(0, 3, 1, 2)
 
     return d_query, d_key, d_value
 
