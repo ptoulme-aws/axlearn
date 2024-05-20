@@ -130,7 +130,7 @@ def flash_attention_implementation(
         @jax.jit
         def jit_attn(query, key, value, bias):
             return neuron_flash_attention(
-                query, key, value)
+                query, key, value, causal, softmax_scale)
 
         return jit_attn
 

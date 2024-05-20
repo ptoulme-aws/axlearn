@@ -7,13 +7,14 @@ import neuronxcc.nki.language as nl
 import numpy as np
 from neuron_jax import nki_call
 from neuronxcc.nki.kernels.attention import flash_attn_bwd, flash_fwd
+from jax import custom_vjp
 
-
-def flash_attention(query, key, value):
-    out, _ = _mha_forward(query, key, value)
+@partial(custom_vjp, nondiff_argnums=(3,4))
+def flash_attention(query, key, value, causal, softmax_scale):
+    out, _ = _mha_forward(query, key, value, causal, softmax_scale)
     return out
 
-def _mha_forward(query, key, value):
+def _mha_forward(query, key, value, causal, softmax_scale):
     # Get the batch size, sequence lengths, number of heads, and hidden dimension
     batch_size, q_seq_len, num_heads, d_model = query.shape
     _, kv_seq_len, _, _ = key.shape
@@ -29,10 +30,9 @@ def _mha_forward(query, key, value):
     attn_output = jnp.zeros((batch_size, num_heads, q_seq_len, d_model), dtype=query.dtype)
     lse = jnp.zeros((batch_size, num_heads, nl.tile_size.pmax, q_seq_len // nl.tile_size.pmax), dtype=jnp.float32)
     seed = jnp.array([1])
-    softmax_scale=1.0
     # Call the NKI kernel using nki_call
     attn_output, lse = nki_call(
-        partial(flash_fwd, use_causal_mask=True, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0),
+        partial(flash_fwd, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0),
         q, k, v, seed, attn_output, lse,
         out_shape=(attn_output_shape, lse_shape),
         grid=(batch_size, num_heads)
@@ -40,13 +40,10 @@ def _mha_forward(query, key, value):
     # Transpose the output back to the original shape
     attn_output = attn_output.transpose(0, 2, 1, 3)  # [batch_size, q_seq_len, num_heads, d_model]
     
-    return attn_output, (lse, attn_output, q, k, v, softmax_scale)
+    return attn_output, (lse, attn_output, q, k, v)
 
-def _mha_backward(res, d_attn_output):
-    lse, o, q, k, v, softmax_scale = res
-    #print(f'Q shape {q.shape}')
-    #print(f'K shape {k.shape}')
-    #print(f'V shape {v.shape}')
+def _mha_backward(causal, softmax_scale, res, d_attn_output):
+    lse, o, q, k, v = res
     batch_size, q_seq_len, num_heads, d_model = q.shape
     _, kv_seq_len, _, _ = k.shape
 
@@ -67,14 +64,11 @@ def _mha_backward(res, d_attn_output):
 
     # Call the NKI kernel using nki_call
     d_query, d_key, d_value = nki_call(
-        partial(flash_attn_bwd, use_causal_mask=True, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale),
+        partial(flash_attn_bwd, use_causal_mask=causal, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale),
         q, k, v, o, dy, lse, seed, d_query, d_key, d_value,
         out_shape=[d_query_shape, d_key_shape, d_value_shape],
         grid=(batch_size, num_heads)
     )
-    #print(f'D Query: {d_query.shape}')
-    #print(f'D Key: {d_key.shape}')
-    #print(f'D Value: {d_value.shape}')
 
     # Batch seq_len heads, head_dim
     # Transpose the gradients back to the original shape
@@ -84,5 +78,4 @@ def _mha_backward(res, d_attn_output):
 
     return d_query, d_key, d_value
 
-flash_attention = jax.custom_vjp(flash_attention)
 flash_attention.defvjp(_mha_forward, _mha_backward)
