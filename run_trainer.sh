@@ -8,6 +8,11 @@
 # Source conda environment
 # source ${CONDA_HOME}/bin/activate ${CONDA_ENV_NAME}
 
+LOG_FILE="./node_${SLURM_NODEID}_output.log"
+
+exec >"$LOG_FILE" 2>&1
+echo "The name of this node is: $SLURMD_NODENAME"
+
 # VENV
 PY_VENV_PATH="/shared_new/ptoulme/axlearn/venv/bin/activate"
 source ${PY_VENV_PATH}
@@ -28,7 +33,7 @@ export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --distribution-strategy=llm-training"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --enable-mixed-precision-accumulation"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} -O1"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --dump=${NEURON_DUMP_PATH}"
-export XLA_FLAGS="--xla_force_host_platform_device_count=32 --xla_dump_hlo_as_text --xla_dump_hlo_as_proto --xla_dump_to=./jax_dump_vlog2 --xla_dump_hlo_pass_re='.*' --xla_disable_hlo_passes=all-reduce-combiner,all-gather-combiner,reduce-scatter-combiner"
+export XLA_FLAGS="--xla_force_host_platform_device_count=32 --xla_dump_hlo_as_text --xla_dump_hlo_as_proto --xla_dump_to=./jax_dump_vlog2 --xla_dump_hlo_pass_re='.*'"
 # Neuron PJRT flags
 export NEURON_WHILE_LOOP_UNROLL=1
 export NEURON_RUN_TRIVIAL_COMPUTATION_ON_CPU=1
@@ -53,12 +58,10 @@ export FI_EFA_USE_DEVICE_RDMA="1"
 export FI_PROVIDER="efa"
 export FI_EFA_FORK_SAFE=1
 
-OUTPUT_DIR="/shared_new/thangakr/axlearn_out"
+OUTPUT_DIR="/shared_new/ptoulme/fresh1"
 DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 # Run the training script
 python3 -m axlearn.common.launch_trainer_main \
     --module=text.gpt.c4_trainer --config=fuji-7B \
     --trainer_dir=$OUTPUT_DIR --data_dir=$DATA_DIR \
-    --jax_backend=neuron --mesh_selector=neuron-trn1.32xlarge-64 \
-    --distributed_coordinator=$MASTER_ADDR:$JAX_COORDINATOR_PORT --num_processes=$num_nodes \
-    --process_id=$NEURON_PJRT_PROCESS_INDEX
+    --jax_backend=neuron --mesh_selector=neuron-trn1.32xlarge-64

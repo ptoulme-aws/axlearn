@@ -44,7 +44,7 @@ def _mha_forward(query, key, value, causal, softmax_scale):
 
 def _mha_backward(causal, softmax_scale, res, d_attn_output):
     lse, o, q, k, v = res
-    batch_size, q_seq_len, num_heads, d_model = q.shape
+    batch_size, num_heads, d_model, seq_len = q.shape
     _, kv_seq_len, _, _ = k.shape
 
     # Transpose the input tensors
