@@ -11,9 +11,9 @@ from jax import custom_vjp
 
 @partial(custom_vjp, nondiff_argnums=(3,4))
 def flash_attention(query, key, value, causal, softmax_scale):
-    out, _ = _mha_forward(query, key, value, causal, softmax_scale)
-    return out
-
+  out, _ = _mha_forward(query, key, value, causal, softmax_scale)
+  return out
+  
 def _mha_forward(query, key, value, causal, softmax_scale):
   # Get the batch size, sequence lengths, number of heads, and hidden dimension
   batch_size, q_seq_len, num_heads, d_model = query.shape
