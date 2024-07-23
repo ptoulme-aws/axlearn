@@ -40,6 +40,11 @@ class WeightedScalar(WeightedScalarValue, Summable):
             raise TypeError(f"Expected WeightedScalar, got {type(other)}.")
         return self + other
 
+    def normalize(self, other: int):
+        if not isinstance(other, int):
+            raise TypeError(f"Expected int, got {type(other)}.")
+        return self / other
+
 
 class MetricAccumulator(Configurable):
     """A MetricAccumulator is used during evaluation to accumulate metrics across batches."""
