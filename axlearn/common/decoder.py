@@ -737,4 +737,9 @@ class LmHead(BaseLayer):
         Returns:
             A float Tensor of shape [batch_size, seq_len, vocab_size].
         """
-        return jnp.einsum("bsh,vh->bsv", x, self.parameters["weight"])
+        x = with_sharding_constraint(x, PartitionSpec(('data', 'fsdp'), None, None))
+        self.parameters["weight"] = with_sharding_constraint(self.parameters["weight"], PartitionSpec(None, None))
+        res = jnp.einsum("bsh,vh->bsv", x, self.parameters["weight"])
+        res = with_sharding_constraint(x, PartitionSpec(('data', 'fsdp'), None, None))
+        return res
+

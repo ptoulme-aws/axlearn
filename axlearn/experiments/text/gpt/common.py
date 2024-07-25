@@ -273,13 +273,13 @@ def model_config(
     set_double_shard_weights_config(
         cfg.decoder.transformer.layer,
         batch_axis_names=batch_axis_names,
-        fsdp_axis_names=("data"),
+        fsdp_axis_names=("fsdp"),
         tp_axis_names="model",
         seq_axis_names=("seq",),
     )
 
     tp_axis_names='model'
-    fsdp_axis_names='data'
+    fsdp_axis_names='fsdp'
     cfg.decoder.emb.token_emb.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
     cfg.decoder.lm_head.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
 
@@ -386,7 +386,7 @@ def mixture_train_input_source(
                 config_for_function(input_tf_data.tfds_dataset).set(
                     dataset_name=component.name,
                     split=component.split,
-                    train_shuffle_buffer_size=64 * component.shuffle_buffer_size,
+                    train_shuffle_buffer_size=0,
                     read_config=tfds_read_config(),
                 )
             )
