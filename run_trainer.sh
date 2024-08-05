@@ -28,12 +28,13 @@ source ./bigcluster_setup.sh
 export NEURON_CC_FLAGS="--framework=XLA"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --model-type transformer"
 #export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --no-internal-hlo-remat"
-export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --distribution-strategy=llm-training"
+export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --distribution-strategy=llm-training --internal-hlo2tensorizer-options='--recursive-layer-det'"
 # export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=8'" # Set indside fuji.py with gradient_accumulation size
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --enable-mixed-precision-accumulation"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} -O1"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --dump=${NEURON_DUMP_PATH}"
-
+export UNSAFE_SCATTER_PASS=1
+export DELETE_PERMUTE=1
 # Neuron PJRT flags
 export NEURON_WHILE_LOOP_UNROLL=1
 export NEURON_RUN_TRIVIAL_COMPUTATION_ON_CPU=1
@@ -42,7 +43,7 @@ export NEURON_RUN_TRIVIAL_COMPUTATION_ON_CPU=1
 export NEURON_RT_ASYNC_EXEC_MAX_INFLIGHT_REQUESTS=1
 #export TF_CPP_MIN_LOG_LEVEL=0
 #export TF_CPP_MAX_VLOG_LEVEL=0
-export NEURON_LIVENESS_DEBUG=1
+#export NEURON_LIVENESS_DEBUG=1
 # Neuron env vars for distributed training based on SLURM
 nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
 num_nodes=$(echo "$nodes" | wc -l)
@@ -60,7 +61,7 @@ export FI_EFA_USE_DEVICE_RDMA="1"
 export FI_PROVIDER="efa"
 export FI_EFA_FORK_SAFE=1
 export XLA_FLAGS="--xla_force_host_platform_device_count=32 --xla_dump_hlo_as_text --xla_dump_hlo_as_proto --xla_dump_to=./jax_dump_vlog2 --xla_dump_hlo_pass_re='.*'"
-OUTPUT_DIR="/shared_new/ptoulme/axlearn/job2/"
+OUTPUT_DIR="/shared_new/ptoulme/axlearn/test_pp"
 DATA_DIR="gs://axlearn-public/tensorflow_datasets"
 # Run the training script
 python3 -m axlearn.common.launch_trainer_main \

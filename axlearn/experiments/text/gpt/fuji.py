@@ -26,15 +26,12 @@ from axlearn.experiments.text.gpt.common import scaled_hidden_dim
 from axlearn.common.utils import DataPartitionType
 import jax
 import os
-jax._src.interpreters.mlir._platforms_with_donation.append('neuron')
 MODEL_SIZES = ("test", "7B")
 MAX_SEQUENCE_LENGTH = 2048
 TRN_MODEL_AXIS_SIZE=8
 TRN_PP_AXIS_SIZE=4
 GRADIENT_ACCUMULATION_MICROBATCHES=1
 
-# Adjust Neuron compiler flags for gradient accumulation
-os.environ["NEURON_CC_FLAGS"] += " --internal-hlo2tensorizer-options='--verify-hlo --num-concat-graphs=8"+ '\''
 
 def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     """Construct default trainer kwargs given a model size."""
@@ -63,11 +60,11 @@ def get_trainer_kwargs(model_size: str, *, vocab_size: int) -> Dict[str, Any]:
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=8,
-                hidden_dim=512,
+                num_layers=32,
+                hidden_dim=4096,
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=32,
-                vocab_size=8000,
+                vocab_size=32000,
             ),
             learner_kwargs=dict(peak_lr=6e-5, weight_decay=6e-7),
             input_partition_type=DataPartitionType.DATA,
