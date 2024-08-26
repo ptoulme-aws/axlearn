@@ -150,7 +150,7 @@ def get_trainer_kwargs(
             model_kwargs=dict(
                 num_layers=32,
                 hidden_dim=128 * 32,
-                ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
+                ffn_dim = scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=256),
                 num_heads=32,
                 num_kv_heads=num_kv_heads,
                 rope_theta=rope_theta,
