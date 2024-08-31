@@ -9,6 +9,7 @@ The fuji models are set up to imitate LLaMA models:
 * LLaMA 2: https://arxiv.org/abs/2307.09288
 * LLaMA 3: https://github.com/meta-llama/llama3
 """
+import os
 import enum
 from typing import Any, Dict, Optional, Union
 
@@ -56,13 +57,16 @@ VOCAB_SIZE = {
 
 # Mapping from Fuji versions to maximum sequence lengths.
 MAX_SEQUENCE_LENGTH = {
-    Version.V1: 8192,
+    Version.V1: 2048,
     Version.V2: 4096,
     Version.V3: 8192,
 }
 
-TRN_MODEL_AXIS_SIZE=64
-GRADIENT_ACCUMULATION_MICROBATCHES=4
+
+TP_DEGREE = int(os.environ.get('TP_DEGREE', '64'))
+TRN_MODEL_AXIS_SIZE = TP_DEGREE
+
+GRADIENT_ACCUMULATION_MICROBATCHES=1
 
 ROPE_THETA = {
     Version.V1: 5e5,
@@ -190,7 +194,7 @@ def get_trainer_kwargs(
     elif model_size == "70B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=10,
+                num_layers=int(os.environ.get('N_LAYERS', 4)),
                 hidden_dim=128 * 64,
                 num_heads=64,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
@@ -202,7 +206,42 @@ def get_trainer_kwargs(
             max_sequence_length=max_sequence_length,
             input_partition_type=DataPartitionType.DATA,
             train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
-            max_step=max_step,
+            max_step=500000,
+            mesh_shape=mesh_shape_from_axes(fsdp=-1),
+            mesh_rules=(
+                # tpu-v5e. step time: TBD.
+                ("tpu-v5litepod-256", mesh_shape_from_axes(data=-1, fsdp=256)),
+                # H100/A100 80G. Maximum per-node batch size = 16, hence need >= 64 nodes.
+                # v2 on gpu-p5.48xlarge 8x64, step time: 12.9s.
+                (
+                    "gpu-(p5.48xlarge|p4de.24xlarge)-(512|1024)",
+                    mesh_shape_from_axes(data=-1, fsdp=128),
+                ),
+                (   
+                    "trn2",
+                    mesh_shape_from_axes(data=-1, model=TRN_MODEL_AXIS_SIZE),
+                ),
+            ),
+            eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),
+            eval_every_n_steps=500_000,
+        )
+    elif model_size == "405B":
+        trainer_kwargs = dict(
+            model_kwargs=dict(
+                num_layers=int(os.environ.get('N_LAYERS', 4)),
+                hidden_dim=16384,
+                ffn_dim=53248,
+                num_heads=128,
+                # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
+                num_kv_heads=None, #if version == Version.V1 else 8,
+                rope_theta=rope_theta,
+                flash_attention=flash_attention,
+            ),
+            learner_kwargs=dict(peak_lr=1.5e-4, weight_decay=0.1),
+            max_sequence_length=8192,
+            input_partition_type=DataPartitionType.DATA,
+            train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
+            max_step=500000,
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
                 # tpu-v5e. step time: TBD.

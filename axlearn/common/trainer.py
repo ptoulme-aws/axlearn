@@ -450,7 +450,7 @@ class SpmdTrainer(Module):
                     )
                     self.vlog(3, "Done step %s", self.step)
                     num_steps += 1
-                    if num_steps % 100 == 0:
+                    if num_steps % 1 == 0:
                         now = time.perf_counter()
                         average_step_time = (now - start_time) / num_steps
                         self._step_log("Average step time: %s seconds", average_step_time)
@@ -459,6 +459,9 @@ class SpmdTrainer(Module):
                         start_time = now
                     if self.step >= cfg.max_step:
                         self._step_log("Reached max_step=%s. Stopping", cfg.max_step)
+                        break
+                    if self.step >= 10:
+                        self._step_log("[indu] stopping test run")
                         break
                 if self.step < cfg.max_step:
                     self._step_log("Reached end of inputs. Stopping")

@@ -1,3 +1,4 @@
+import os
 from absl import logging
 import jax
 import jax.numpy as jnp
@@ -8,6 +9,22 @@ import neuronxcc.nki.language as nl
 import numpy as np
 from neuron_jax import nki_call
 from neuronxcc.nki.kernels.attention import flash_attn_bwd, flash_fwd
+
+if 'VNC' not in os.environ:
+    raise ValueError("VNC environment variable is not set")
+
+cores_per_vnc = os.environ['VNC']
+if cores_per_vnc == '2':
+    use_vnc = True
+elif cores_per_vnc == '1':
+    use_vnc = False
+else:
+    raise ValueError("VNC environment variable must be set to '1' or '2'")
+
+if use_vnc:
+    from neuronxcc.nki._private_kernels.attention import flash_fwd_shardable, flash_attn_bwd_shardable
+    from neuronxcc.starfish.penguin.targets.nki.private_api import vnc
+
 from jax import custom_vjp
 
 @partial(custom_vjp, nondiff_argnums=(3,4))
@@ -31,10 +48,10 @@ def _mha_forward(query, key, value, causal, softmax_scale):
   seed = jnp.array([1])
   # Call the NKI kernel using nki_call
   attn_output, lse = nki_call(
-      partial(flash_fwd, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0),
+      partial(flash_fwd_shardable if use_vnc else flash_fwd, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0),
       q, k, v, seed, 
       out_shape=(attn_output_shape, lse_shape),
-      grid=(batch_size, num_heads)
+      grid=(batch_size, num_heads, vnc(2)) if use_vnc else (batch_size, num_heads)
   )
   # Transpose the output back to the original shape
   attn_output = attn_output.transpose(0, 2, 1, 3)  # [batch_size, q_seq_len, num_heads, d_model]
@@ -60,10 +77,10 @@ def _mha_backward(causal, softmax_scale, res, d_attn_output):
 
   # Call the NKI kernel using nki_call
   d_query, d_key, d_value = nki_call(
-      partial(flash_attn_bwd, use_causal_mask=causal, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale),
+      partial(flash_attn_bwd_shardable if use_vnc else flash_attn_bwd, use_causal_mask=causal, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale),
       q, k, v, o, dy, lse, seed,
       out_shape=[d_query_shape, d_key_shape, d_value_shape],
-      grid=(batch_size, num_heads)
+      grid=(batch_size, num_heads, vnc(2)) if use_vnc else (batch_size, num_heads)
   )
 
   # Batch seq_len heads, head_dim
@@ -75,3 +92,4 @@ def _mha_backward(causal, softmax_scale, res, d_attn_output):
   return d_query, d_key, d_value
 
 flash_attention.defvjp(_mha_forward, _mha_backward)
+
