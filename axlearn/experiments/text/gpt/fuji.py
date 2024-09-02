@@ -38,6 +38,8 @@ from axlearn.common.learner import GeometricMeanStrategy, AddStrategy
 import jax
 import os
 
+jax._src.interpreters.mlir._platforms_with_donation.append('neuron')
+
 MODEL_SIZES = ("test", "7B", "70B")
 
 
