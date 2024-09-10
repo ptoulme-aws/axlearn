@@ -274,13 +274,13 @@ def model_config(
     set_double_shard_weights_config(
         cfg.decoder.transformer.layer,
         batch_axis_names=batch_axis_names,
-        fsdp_axis_names=("data"),
+        fsdp_axis_names=("fsdp", "data"),
         tp_axis_names="model",
         seq_axis_names=("seq",),
     )
 
     tp_axis_names='model'
-    fsdp_axis_names='data'
+    fsdp_axis_names=('fsdp', 'data')
     cfg.decoder.emb.token_emb.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
     cfg.decoder.lm_head.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
 

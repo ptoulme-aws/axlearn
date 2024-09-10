@@ -61,8 +61,8 @@ MAX_SEQUENCE_LENGTH = {
     Version.V3: 8192,
 }
 
-TRN_MODEL_AXIS_SIZE=64
-GRADIENT_ACCUMULATION_MICROBATCHES=4
+TRN_MODEL_AXIS_SIZE=16
+GRADIENT_ACCUMULATION_MICROBATCHES=1
 
 ROPE_THETA = {
     Version.V1: 5e5,
@@ -190,7 +190,7 @@ def get_trainer_kwargs(
     elif model_size == "70B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=10,
+                num_layers=2,
                 hidden_dim=128 * 64,
                 num_heads=64,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
@@ -215,7 +215,7 @@ def get_trainer_kwargs(
                 ),
                 (   
                     "trn2",
-                    mesh_shape_from_axes(data=-1, model=TRN_MODEL_AXIS_SIZE),
+                    mesh_shape_from_axes(fsdp=8, data=-1, model=TRN_MODEL_AXIS_SIZE),
                 ),
             ),
             eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),
@@ -272,6 +272,7 @@ def model_config(
     if num_kv_heads:
         atten_cfg = GroupedQueryAttention.default_config()
         atten_input_linear = FusedGroupedQKVLinear.default_config().set(num_kv_heads=num_kv_heads)
+        # atten_input_linear = GroupedQKVLinear.default_config().set(num_kv_heads=num_kv_heads)
     else:
         atten_cfg = MultiheadAttention.default_config()
         atten_input_linear = FusedQKVLinear.default_config()

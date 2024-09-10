@@ -449,6 +449,9 @@ class SpmdTrainer(Module):
                         else None,
                     )
                     self.vlog(3, "Done step %s", self.step)
+                    if num_steps > 201:
+                        raise Exception("AG max step exception") 
+                    
                     num_steps += 1
                     if num_steps % 100 == 0:
                         now = time.perf_counter()
