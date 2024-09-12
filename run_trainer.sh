@@ -15,11 +15,14 @@ NEURON_DUMP_PATH=${TEST_ARTIFACTS_PATH}/neuron_dump
 HLO_DUMP_PATH=${TEST_ARTIFACTS_PATH}/hlo_dump
 export XLA_FLAGS="--xla_dump_hlo_as_text --xla_disable_hlo_passes=aws_neuron_flip_all_gather_dot --xla_dump_hlo_as_proto --xla_dump_to=${HLO_DUMP_PATH} --xla_dump_hlo_pass_re='.*'"
 
-
+export TF_CPP_MIN_LOG_LEVEL=0 # Enable SPMD verbose logging - 0 means most verbose
+export TF_CPP_MAX_VLOG_LEVEL=0 # Needs above flag for logging but goes in reverse. 0 means no log
+export TF_CPP_MIN_LOG_LEVEL=0
+export TF_CPP_MAX_VLOG_LEVEL=0
 # Neuron compiler flags
 export NEURON_CC_FLAGS="--framework=XLA"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --target=trn2 --distribution-strategy=llm-training --internal-compiler-debug-mode=front"
-export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --internal-num-neuroncores-per-sengine=1 --internal-hlo2tensorizer-options='--verify-hlo'"
+export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --internal-num-neuroncores-per-sengine=1"
 export NEURON_RT_VIRTUAL_CORE_SIZE=1
 export NEURON_RT_RESET_CORES=1
 export NEURON_RT_LOG_LEVEL="WARNING"
