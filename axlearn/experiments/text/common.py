@@ -62,6 +62,7 @@ def tfds_text_source(
             read_config=config_for_function(input_tf_data.tfds_read_config).set(
                 read_parallelism=read_parallelism,
                 decode_parallelism=decode_parallelism,
+                is_training=False,
             ),
             train_shuffle_buffer_size=shuffle_buffer_size,
         )

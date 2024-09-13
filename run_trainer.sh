@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 sudo dpkg -i /home/apoorvgu/drop/drop_08_22/aws-neuronx-collectives-2.x.17114.0-afcd272e2.deb
 sudo dpkg -i /home/apoorvgu/drop/drop_08_22/aws-neuronx-runtime-lib-2.x.16062.0-a907e4619.deb
-PY_VENV_PATH="/home/apoorvgu/axlearn_pvenv/bin/activate"
+PY_VENV_PATH="/home/apoorvgu/py310/bin/activate"
 source ${PY_VENV_PATH}
 
-cd /axlearn
+# cd /axlearn
 
 ARTIFACTS_PATH="/home/apoorvgu/artifacts"
 TIMESTAMP=$(date +"%y%m%d%H%M%S")
@@ -19,8 +19,8 @@ export XLA_FLAGS="--xla_dump_hlo_as_text --xla_disable_hlo_passes=aws_neuron_fli
 # Neuron compiler flags
 export NEURON_CC_FLAGS="--framework=XLA"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --target=trn2 --distribution-strategy=llm-training"
-export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --internal-num-neuroncores-per-sengine=1 --internal-hlo2tensorizer-options='--verify-hlo'"
-export NEURON_RT_VIRTUAL_CORE_SIZE=1
+export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --internal-num-neuroncores-per-sengine=2 --internal-hlo2tensorizer-options='--verify-hlo'"
+export NEURON_RT_VIRTUAL_CORE_SIZE=2
 export NEURON_RT_RESET_CORES=1
 export NEURON_RT_LOG_LEVEL="WARNING"
 export NEURON_CC_FLAGS="${NEURON_CC_FLAGS} --target=trn2"

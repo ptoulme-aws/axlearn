@@ -58,11 +58,11 @@ VOCAB_SIZE = {
 MAX_SEQUENCE_LENGTH = {
     Version.V1: 8192,
     Version.V2: 4096,
-    Version.V3: 8192,
+    Version.V3: 4096,
 }
 
 TRN_MODEL_AXIS_SIZE=64
-GRADIENT_ACCUMULATION_MICROBATCHES=4
+GRADIENT_ACCUMULATION_MICROBATCHES=8
 
 ROPE_THETA = {
     Version.V1: 5e5,
@@ -133,7 +133,7 @@ def get_trainer_kwargs(
             input_partition_type=DataPartitionType.DATA,
             max_sequence_length=64,
             train_batch_size=32,
-            max_step=3000,
+            max_step=500_000,
             eval_every_n_steps=1500,
             save_every_n_steps=500,
             mesh_shape=mesh_shape_from_axes(data=-1),
@@ -190,7 +190,7 @@ def get_trainer_kwargs(
     elif model_size == "70B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=10,
+                num_layers=8,
                 hidden_dim=128 * 64,
                 num_heads=64,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
@@ -198,11 +198,11 @@ def get_trainer_kwargs(
                 rope_theta=rope_theta,
                 flash_attention=flash_attention,
             ),
-            learner_kwargs=dict(peak_lr=1.5e-4, weight_decay=0.1),
+            learner_kwargs=dict(peak_lr=1.5e-5, weight_decay=6e-6),
             max_sequence_length=max_sequence_length,
             input_partition_type=DataPartitionType.DATA,
             train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
-            max_step=max_step,
+            max_step=500_000,
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
                 # tpu-v5e. step time: TBD.
@@ -219,7 +219,9 @@ def get_trainer_kwargs(
                 ),
             ),
             eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),
-            eval_every_n_steps=500_000,
+            eval_every_n_steps=50000,
+            save_every_n_steps=2000,
+            keep_every_n_steps=5000,
         )
     else:
         raise NotImplementedError(f"Unknown model size {model_size}.")
