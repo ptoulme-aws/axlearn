@@ -58,7 +58,7 @@ VOCAB_SIZE = {
 MAX_SEQUENCE_LENGTH = {
     Version.V1: 8192,
     Version.V2: 4096,
-    Version.V3: 8192,
+    Version.V3: 4096,
 }
 
 TRN_MODEL_AXIS_SIZE=16
@@ -142,7 +142,7 @@ def get_trainer_kwargs(
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=10,
+                num_layers=30,
                 hidden_dim=8192,
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=64,
@@ -202,7 +202,7 @@ def get_trainer_kwargs(
             max_sequence_length=max_sequence_length,
             input_partition_type=DataPartitionType.DATA,
             train_batch_size=int((jax.device_count()/TRN_MODEL_AXIS_SIZE)*GRADIENT_ACCUMULATION_MICROBATCHES),
-            max_step=max_step,
+            max_step=500_000,
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
                 # tpu-v5e. step time: TBD.
