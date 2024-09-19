@@ -46,7 +46,6 @@ import math
 from enum import Enum, unique
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple, Union
 
-from jax.ad_checkpoint import checkpoint_name
 import jax
 from jax import numpy as jnp
 from jax.ad_checkpoint import checkpoint_policies as jax_remat_policies
@@ -58,6 +57,7 @@ from axlearn.common.base_layer import (
     NestedParameterSpec,
     ParameterSpec,
     RematSpec,
+    no_remat,
 )
 from axlearn.common.config import (
     REQUIRED,
@@ -1063,7 +1063,6 @@ class FusedQKVLinear(BaseQKVLinear):
                 # N.B. this branch (with just the query inputs) is required in
                 # order to get the best step time on TPU for self-attention.
                 inputs = query  # [batch, target_length, target_dim].
-                inputs = checkpoint_name(inputs, name='input_to_qkv')
                 proj = self.qkv_proj.einsum_maybe_quantized(
                     "btd,pdnh->pbtnh", activation=inputs, kernel=params["weight"]
                 )
@@ -2395,7 +2394,6 @@ class TransformerAttentionLayer(BaseLayer):
             skip_input = self._remat_name(skip_input, 'residual_skip')
             norm_target = self.norm(target)
             norm_target = with_sharding_constraint(norm_target, PartitionSpec('data',None,None))
-            norm_target = checkpoint_name(norm_target, name='before_thunk')
             #norm_target = self._remat_name(norm_target, 'attention_norm')
             atten_state, atten_output = attention_thunk(norm_target)
             atten_output = with_sharding_constraint(atten_output, PartitionSpec('data','model',None))
@@ -2695,6 +2693,7 @@ class TransformerFeedForwardLayer(BaseLayer):
             if value not in ["inputs", "linear1_outputs", "linear2_outputs"]:
                 raise NotImplementedError(f"add_value_rms_norm_summary: {value}")
 
+    # @no_remat
     def forward(self, inputs: Tensor) -> Tensor:
         cfg = self.config
 
@@ -2766,6 +2765,7 @@ class TransformerFeedForwardLayer(BaseLayer):
             raise NotImplementedError(cfg.structure)
         return x
 
+    # @no_remat
     def _linear1_activation(self, x: Tensor) -> Tensor:
         cfg = self.config
         if isinstance(cfg.activation, tuple):
@@ -3058,7 +3058,6 @@ class ParallelTransformerLayer(BaseTransformerLayer):
         """
         inputs = data
         data = self.norm(data)
-        data = checkpoint_name(data, name='before_attention')
         self_atten_outputs = self.self_attention(
             query=data,
             key=data,
@@ -3769,8 +3768,30 @@ class PipelinedTransformerLayer(BaseStackedTransformerLayer):
 
     # TODO(sneha): extend_step
 
+def save_all_names_but_these(*names_not_to_save):
+    # Save all values, including unnamed ones, excluding the specified names.
+    names_not_to_save = frozenset(names_not_to_save)
+    def policy(prim, *_, **params):
+        if 'name' in params and params['name'] in names_not_to_save:
+            return False
+        return True
+    return policy
 
 def build_remat_spec(
+    stack_cfg: Union[
+        BaseStackedTransformerLayer.Config, "RepeatedConformerLayer.Config"  # type: ignore
+    ],
+    self_attention: bool = True,
+    feed_forward: bool = False,
+) -> Optional[RematSpec]:
+    return RematSpec(
+        prevent_cse=True,
+        policy=config_for_function(save_all_names_but_these).set(
+            names_not_to_save=(['noname'])
+            ),
+    )
+
+def build_remat_spec_bak(
     stack_cfg: Union[
         BaseStackedTransformerLayer.Config, "RepeatedConformerLayer.Config"  # type: ignore
     ],
@@ -3811,11 +3832,12 @@ def build_remat_spec(
             # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
             # or Repeated Conformers) we can enable common subexpression elimination optimizations.
             policy=config_for_function(jax.checkpoint_policies.save_any_names_but_these).set(
-                names_not_to_save=(["all_gather","before_attention", "before_thunk", "input_to_qkv"] +
-                    [f"{attention_name}.{el}"
-                    for el in ['input_qkv_ag', 'o_proj']] +
-                    [f"{ffn_name}.{el}" for el in ["mlp_norm", "linear2"]]
-                )
+#                names_not_to_save=(["before_attention", "before_thunk", "input_to_qkv"] +
+#                    [f"{attention_name}.{el}"
+#                    for el in ['input_qkv_ag', 'o_proj']] +
+#                    [f"{ffn_name}.{el}" for el in ["mlp_norm", "linear2"]]
+#                 )
+                names_not_to_save=(["noname"])
             ),
         )
     checkpoints = []

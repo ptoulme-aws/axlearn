@@ -486,8 +486,9 @@ class BaseLayer(Module):
         Returns:
             Tagged x.
         """
-        full_name = f"{type(self).__name__}.{name}"
-        return jax.ad_checkpoint.checkpoint_name(x, full_name)
+        # full_name = f"{type(self).__name__}.{name}"
+        # return jax.ad_checkpoint.checkpoint_name(x, full_name)
+        return x
 
     @property
     def parameters(self):
