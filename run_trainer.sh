@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-sudo dpkg -i /home/apoorvgu/drop/drop_08_22/aws-neuronx-collectives-2.x.17114.0-afcd272e2.deb
-sudo dpkg -i /home/apoorvgu/drop/drop_08_22/aws-neuronx-runtime-lib-2.x.16062.0-a907e4619.deb
-PY_VENV_PATH="/home/apoorvgu/axlearn_pvenv/bin/activate"
-source ${PY_VENV_PATH}
+# sudo dpkg -i /home/apoorvgu/drop/drop_08_22/aws-neuronx-collectives-2.x.17114.0-afcd272e2.deb
+# sudo dpkg -i /home/apoorvgu/drop/drop_08_22/aws-neuronx-runtime-lib-2.x.16062.0-a907e4619.deb
+# PY_VENV_PATH="/home/apoorvgu/axlearn_pvenv/bin/activate"
+# source ${PY_VENV_PATH}
 
-cd /axlearn
+# cd /axlearn
 
-ARTIFACTS_PATH="/home/apoorvgu/artifacts"
+ARTIFACTS_PATH="/home/$USER/artifacts"
 TIMESTAMP=$(date +"%y%m%d%H%M%S")
 TEST_ARTIFACTS_PATH="${ARTIFACTS_PATH}/${TIMESTAMP}"
 mkdir -p "$TEST_ARTIFACTS_PATH"

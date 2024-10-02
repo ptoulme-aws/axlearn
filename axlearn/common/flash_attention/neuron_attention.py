@@ -8,6 +8,7 @@ import neuronxcc.nki.language as nl
 import numpy as np
 from jax_neuronx import nki_call
 from neuronxcc.nki.kernels.attention import flash_attn_bwd, flash_fwd
+from neuronxcc.nki._private_kernels.attention import attention_isa_kernel, backward_attention_isa_kernel
 from jax import custom_vjp
 
 @partial(custom_vjp, nondiff_argnums=(3,4))
@@ -30,9 +31,10 @@ def _mha_forward(query, key, value, causal, softmax_scale):
   lse_shape = jax.ShapeDtypeStruct((batch_size, num_heads, nl.tile_size.pmax, q_seq_len // nl.tile_size.pmax), dtype=jnp.float32)
   seed = jnp.array([1])
   # Call the NKI kernel using nki_call
+  # TODO: What happened to the seed parameter?
   attn_output, lse = nki_call(
-      partial(flash_fwd, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0),
-      q, k, v, seed, 
+      partial(attention_isa_kernel),
+      q, k, v, softmax_scale,
       out_shape=(attn_output_shape, lse_shape),
       grid=(batch_size, num_heads)
   )
@@ -59,9 +61,11 @@ def _mha_backward(causal, softmax_scale, res, d_attn_output):
   seed = jnp.array([1])
 
   # Call the NKI kernel using nki_call
+  # TODO: do =? dy
+  # TODO: neg_max, recip
   d_query, d_key, d_value = nki_call(
-      partial(flash_attn_bwd, use_causal_mask=causal, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale),
-      q, k, v, o, dy, lse, seed,
+      partial(backward_attention_isa_kernel, is_causal=causal, dropout_p=0.0, scale_val=softmax_scale),
+      q, k, v, o, dy, lse,
       out_shape=[d_query_shape, d_key_shape, d_value_shape],
       grid=(batch_size, num_heads)
   )
