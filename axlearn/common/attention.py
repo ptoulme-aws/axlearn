@@ -1063,7 +1063,6 @@ class FusedQKVLinear(BaseQKVLinear):
                 # N.B. this branch (with just the query inputs) is required in
                 # order to get the best step time on TPU for self-attention.
                 inputs = query  # [batch, target_length, target_dim].
-                inputs = checkpoint_name(inputs, name='input_to_qkv')
                 proj = self.qkv_proj.einsum_maybe_quantized(
                     "btd,pdnh->pbtnh", activation=inputs, kernel=params["weight"]
                 )
@@ -1820,7 +1819,7 @@ class MultiheadAttention(BaseLayer):
             attention_logit_biases=attention_logit_biases,
             return_aux=return_aux,
         )
-        output = with_sharding_constraint(output, PartitionSpec(('data','fsdp'), None, None))
+        output = with_sharding_constraint(output, PartitionSpec(('fsdp'), None, None))
         return output
 
     def _cap_logits(self, logits: Tensor) -> Tensor:
@@ -2390,15 +2389,14 @@ class TransformerAttentionLayer(BaseLayer):
             return atten_state, atten_output
 
         if cfg.structure == "prenorm":
-            target = with_sharding_constraint(target, PartitionSpec(('data','fsdp'),'model',None))
+            target = with_sharding_constraint(target, PartitionSpec(('fsdp'),'model',None))
             skip_input = target  # pre-norm: where normalization happens within the residual part.
             skip_input = self._remat_name(skip_input, 'residual_skip')
             norm_target = self.norm(target)
-            norm_target = with_sharding_constraint(norm_target, PartitionSpec(('data','fsdp'),None,None))
-            norm_target = checkpoint_name(norm_target, name='before_thunk')
+            norm_target = with_sharding_constraint(norm_target, PartitionSpec(('fsdp'),None,None))
             #norm_target = self._remat_name(norm_target, 'attention_norm')
             atten_state, atten_output = attention_thunk(norm_target)
-            atten_output = with_sharding_constraint(atten_output, PartitionSpec(('data','fsdp'),'model',None))
+            atten_output = with_sharding_constraint(atten_output, PartitionSpec(('fsdp'),'model',None))
             data = skip_input + self.stochastic_depth(self.dropout(atten_output.data))
             data = self._remat_name(data, 'residual_add')
         elif cfg.structure == "postnorm":
@@ -2710,16 +2708,16 @@ class TransformerFeedForwardLayer(BaseLayer):
         remat_pt2 = "linear2"
         inputs = self._remat_name(inputs, 'residual_input')
         if cfg.structure == "prenorm":
-            x = with_sharding_constraint(inputs, PartitionSpec(('data','fsdp'),'model',None))
+            x = with_sharding_constraint(inputs, PartitionSpec(('fsdp'),'model',None))
             x = self.norm(inputs)
             x = self._remat_name(x, 'mlp_norm')
-            x = with_sharding_constraint(x, PartitionSpec(('data','fsdp'),None,None))
+            x = with_sharding_constraint(x, PartitionSpec(('fsdp'),None,None))
             x = self._linear1_activation(x)
             x = self._remat_name(x, remat_pt1)
             x = self.dropout1(x)
             x = _linear2(x)
             x = self._remat_name(x, remat_pt2)
-            x = with_sharding_constraint(x, PartitionSpec(('data','fsdp'),'model',None))
+            x = with_sharding_constraint(x, PartitionSpec(('fsdp'),'model',None))
             x = self.dropout2(x)
             x = self.stochastic_depth(x)
             if cfg.residual_weight != 1:
@@ -3058,7 +3056,6 @@ class ParallelTransformerLayer(BaseTransformerLayer):
         """
         inputs = data
         data = self.norm(data)
-        data = checkpoint_name(data, name='before_attention')
         self_atten_outputs = self.self_attention(
             query=data,
             key=data,
@@ -3215,7 +3212,7 @@ class BottleNeckAdapterTransformerLayer(BaseTransformerLayer):
 def set_double_shard_weights_config(
     cfg: Union[TransformerLayer.Config, Sequence[TransformerLayer.Config]],
     *,
-    batch_axis_names: Union[str, Sequence[str]] = ("data", "fsdp"),
+    batch_axis_names: Union[str, Sequence[str]] = ("fsdp"),
     fsdp_axis_names: Union[str, Sequence[str]] = "fsdp",
     tp_axis_names: Union[str, Sequence[str]] = "model",
     seq_axis_names: Union[str, Sequence[str]] = "seq",
@@ -3770,7 +3767,29 @@ class PipelinedTransformerLayer(BaseStackedTransformerLayer):
     # TODO(sneha): extend_step
 
 
+def save_all_names_but_these(*names_not_to_save):
+    # Save all values, including unnamed ones, excluding the specified names.
+    names_not_to_save = frozenset(names_not_to_save)
+    def policy(prim, *_, **params):
+        if 'name' in params and params['name'] in names_not_to_save:
+            return False
+        return True
+    return policy
+
 def build_remat_spec(
+    stack_cfg: Union[
+        BaseStackedTransformerLayer.Config, "RepeatedConformerLayer.Config"  # type: ignore
+    ],
+    self_attention: bool = True,
+    feed_forward: bool = False,
+) -> Optional[RematSpec]:
+    return RematSpec(
+        prevent_cse=True,
+        policy=config_for_function(save_all_names_but_these).set(
+            names_not_to_save=(['noname'])
+            ),
+    )
+def build_remat_spec_bak(
     stack_cfg: Union[
         BaseStackedTransformerLayer.Config, "RepeatedConformerLayer.Config"  # type: ignore
     ],
@@ -3811,11 +3830,12 @@ def build_remat_spec(
             # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
             # or Repeated Conformers) we can enable common subexpression elimination optimizations.
             policy=config_for_function(jax.checkpoint_policies.save_any_names_but_these).set(
-                names_not_to_save=(["all_gather","before_attention", "before_thunk", "input_to_qkv"] +
-                    [f"{attention_name}.{el}"
-                    for el in ['input_qkv_ag', 'o_proj']] +
-                    [f"{ffn_name}.{el}" for el in ["mlp_norm", "linear2"]]
-                )
+#                names_not_to_save=(["before_attention", "before_thunk", "input_to_qkv"] +
+#                    [f"{attention_name}.{el}"
+#                    for el in ['input_qkv_ag', 'o_proj']] +
+#                    [f"{ffn_name}.{el}" for el in ["mlp_norm", "linear2"]]
+#                 )
+                names_not_to_save=(["noname"])
             ),
         )
     checkpoints = []

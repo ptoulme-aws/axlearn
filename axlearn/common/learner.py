@@ -191,6 +191,7 @@ class BaseLearner(Module):
         """
         raise NotImplementedError(type(self))
 
+from absl import logging
 
 class Learner(BaseLearner):
     """The learner module."""
@@ -237,9 +238,27 @@ class Learner(BaseLearner):
         self, model_param_specs: NestedParameterSpec
     ) -> NestedPartitionSpec:
         optimizer_model_param_specs = self._get_optimizer_model_params(model_param_specs)
+        logging.info("Creating optimizer param specs Previous")
+        jax.tree_map(lambda x: logging.info(x), optimizer_model_param_specs)
+        def change_axis(x):
+            axis = x.mesh_axes
+            logging.info("printing axis")
+            new_axis = []
+            for i in axis:
+                logging.info(i)
+                if (i == 'fsdp'):
+                    new_axis.append(('fsdp', 'data'))
+                else:
+                    new_axis.append(i)
+            x.mesh_axes = PartitionSpec(*tuple(new_axis))
+            return x
+        optimizer_model_param_specs = jax.tree_map(lambda x: change_axis(x), optimizer_model_param_specs)
+        logging.info("Creating optimizer param specs new")
+        jax.tree_map(lambda x: logging.info(x), optimizer_model_param_specs)
         partition_state = dict(optimizer=self.optimizer.partition(optimizer_model_param_specs))
         if self.config.ema.decay is not None:
             partition_state["ema"] = self.ema.partition(model_param_specs)
+        # raise Exception("Done")
         return partition_state
 
     def _get_optimizer_model_params(self, model_params: NestedOptParam) -> NestedOptParam:

@@ -16,6 +16,7 @@ from axlearn.common import causal_lm, config
 from axlearn.common.attention import (
     FusedGroupedQKVLinear,
     FusedQKVLinear,
+    GroupedQKVLinear,
     GroupedQueryAttention,
     MultiheadAttention,
     RepeatedTransformerLayer,
@@ -37,8 +38,9 @@ from axlearn.common.learner import GeometricMeanStrategy, AddStrategy
 import jax
 import os
 
-MODEL_SIZES = ("test", "7B", "70B")
+jax._src.interpreters.mlir._platforms_with_donation.append('neuron')
 
+MODEL_SIZES = ("test", "7B", "70B")
 
 class Version(enum.Enum):
     V1 = 1
@@ -142,7 +144,7 @@ def get_trainer_kwargs(
     elif model_size == "7B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=30,
+                num_layers=4,
                 hidden_dim=8192,
                 ffn_dim=scaled_hidden_dim(scale=4, round_up_to_multiples_of=16),
                 num_heads=64,
@@ -190,11 +192,11 @@ def get_trainer_kwargs(
     elif model_size == "70B":
         trainer_kwargs = dict(
             model_kwargs=dict(
-                num_layers=10,
+                num_layers=8,
                 hidden_dim=128 * 64,
                 num_heads=64,
                 # No GQA support in V1 models, so num_kv_heads is the same as num_heads.
-                num_kv_heads=None, #if version == Version.V1 else 8,
+                num_kv_heads=None,# if version == Version.V1 else 16,
                 rope_theta=rope_theta,
                 flash_attention=flash_attention,
             ),
@@ -215,7 +217,7 @@ def get_trainer_kwargs(
                 ),
                 (   
                     "trn2",
-                    mesh_shape_from_axes(fsdp=8, data=-1, model=TRN_MODEL_AXIS_SIZE),
+                    mesh_shape_from_axes(data=2, fsdp=4, model=TRN_MODEL_AXIS_SIZE),
                 ),
             ),
             eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),
