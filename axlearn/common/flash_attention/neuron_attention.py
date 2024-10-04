@@ -42,12 +42,12 @@ def _mha_forward(query, key, value, causal, softmax_scale):
   seed = jnp.array([1])
   # Call the NKI kernel using nki_call
   print(f"ATTENTION HAPPENING")
-  # kernel_name = "CausalAttentionMMSoftmaxMMWithoutSwap" if causal else "AttentionMMSoftmaxMMWithoutSwap"
+  kernel_name = "CausalAttentionMMSoftmaxMMWithoutSwap" if causal else "AttentionMMSoftmaxMMWithoutSwap"
   # jax will attempt to turn into a TensorRef any args passed in the following nki_call. To pass constants that should not be
   # differentiated, such as for example softmax scale, include it in a partial(), such as partial(attention_isa_kernel_cache, scale=softmax_scale)
   # In the kernel interface being called here, such as attention_isa_kernel_cache, it is necessary for the constants to be keyword arguments
   attn_output, neg_max, recip = nki_call(
-      partial(attention_isa_kernel_cache, scale=softmax_scale),
+      partial(attention_isa_kernel_cache, scale=softmax_scale, kernel_name=kernel_name),
       q, k, v,
       out_shape=(attn_output_shape, neg_max_shape, recip_shape),
   )
