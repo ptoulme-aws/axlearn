@@ -10,8 +10,6 @@ from jax_neuronx import nki_call
 from neuronxcc.nki.kernels.attention import flash_attn_bwd, flash_fwd
 from neuronxcc.nki._private_kernels.attention import attention_isa_kernel_cache, backward_attention_isa_kernel
 from jax import custom_vjp
-from neuronxcc.starfish.penguin.targets.nki.private_api import vnc
-import os
 
 @partial(custom_vjp, nondiff_argnums=(3,4))
 def flash_attention(query, key, value, causal, softmax_scale):
@@ -39,9 +37,7 @@ def _mha_forward(query, key, value, causal, softmax_scale):
   # [bs, 128, seq_q / 128]
   recip_shape = jax.ShapeDtypeStruct((batch_size, nl.tile_size.pmax, q_seq_len // nl.tile_size.pmax), dtype=jnp.float32)
   neg_max_shape = jax.ShapeDtypeStruct((batch_size, nl.tile_size.pmax, q_seq_len // nl.tile_size.pmax), dtype=jnp.float32)
-  seed = jnp.array([1])
   # Call the NKI kernel using nki_call
-  print(f"ATTENTION HAPPENING")
   kernel_name = "CausalAttentionMMSoftmaxMMWithoutSwap" if causal else "AttentionMMSoftmaxMMWithoutSwap"
   # jax will attempt to turn into a TensorRef any args passed in the following nki_call. To pass constants that should not be
   # differentiated, such as for example softmax scale, include it in a partial(), such as partial(attention_isa_kernel_cache, scale=softmax_scale)
@@ -74,8 +70,6 @@ def _mha_backward(causal, softmax_scale, res, d_attn_output):
   d_query_shape = jax.ShapeDtypeStruct(q.shape, q.dtype)
   d_key_shape = jax.ShapeDtypeStruct(k.shape, k.dtype)
   d_value_shape = jax.ShapeDtypeStruct(v.shape, v.dtype)
-  seed = jnp.array([1])
-  print("BACK IS HAPPENING")
 
   # Call the NKI kernel using nki_call
   d_query, d_key, d_value = nki_call(
