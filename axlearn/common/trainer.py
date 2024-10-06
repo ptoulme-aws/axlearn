@@ -460,9 +460,12 @@ class SpmdTrainer(Module):
                     if self.step >= cfg.max_step:
                         self._step_log("Reached max_step=%s. Stopping", cfg.max_step)
                         break
-                    if self.step >= 10:
-                        self._step_log("[indu] stopping test run")
-                        break
+                    max_train_steps = os.environ.get('MAX_TRAIN_STEPS')
+                    if max_train_steps is not None:
+                        max_train_steps = int(max_train_steps)
+                        if self.step >= max_train_steps:
+                            self._step_log(f"Stopping test run after {max_train_steps} steps")
+                            break
                 if self.step < cfg.max_step:
                     self._step_log("Reached end of inputs. Stopping")
             self._step_log("Checkpointer flushed.")
