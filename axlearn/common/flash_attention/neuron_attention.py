@@ -21,6 +21,10 @@ elif cores_per_vnc == '1':
 else:
     raise ValueError("VNC environment variable must be set to '1' or '2'")
 
+disable_sharded_attn_kernel = os.environ['DISABLE_SHARDED_ATTN_KERNEL']
+if disable_sharded_attn_kernel:
+   use_vnc = False
+
 if use_vnc:
     from neuronxcc.nki._private_kernels.attention import flash_fwd_shardable, flash_attn_bwd_shardable
     from neuronxcc.starfish.penguin.targets.nki.private_api import vnc
