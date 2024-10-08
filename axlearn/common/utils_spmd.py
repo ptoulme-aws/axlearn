@@ -87,6 +87,7 @@ def setup(
                 coordinator_address=distributed_coordinator,
                 num_processes=num_processes,
                 process_id=process_id,
+                local_device_ids=[0,1,2,3,4,5,6,7],
             )
 
         # Ensure that coordinator initialization respects initialization_timeout.
