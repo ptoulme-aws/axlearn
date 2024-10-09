@@ -33,6 +33,7 @@ from axlearn.common.attention import (
     FusedQKVLinear,
     MultiheadAttention,
     RepeatedTransformerLayer,
+    StackedTransformerLayer,
     TransformerLayer,
     build_remat_spec,
     set_double_shard_weights_config,
@@ -233,7 +234,7 @@ def model_config(
         layer_cfg.self_attention.attention.input_linear = attention_qkv_linear
     layer_cfg.self_attention.structure = atten_structure
     layer_cfg.self_attention.attention.atten_logit_cap = atten_logit_cap
-    if stack_cfg.klass is RepeatedTransformerLayer:
+    if stack_cfg.klass is RepeatedTransformerLayer or stack_cfg.klass is StackedTransformerLayer:
         if layer_cfg.self_attention.attention.klass is not FlashAttention:
             # Enable remat to reduce memory usage for larger models.
             layer_cfg.remat_spec = build_remat_spec(stack_cfg)
@@ -251,7 +252,7 @@ def model_config(
         vocab_size=vocab_size,
         emb=emb_cfg,
         dropout_rate=dropout_rate,
-        lm_head=LmHead.default_config()
+        # lm_head=LmHead.default_config()
     )
     # Model.
     model_param_init = DefaultInitializer.default_config().set(
@@ -281,7 +282,7 @@ def model_config(
     tp_axis_names='model'
     fsdp_axis_names='data'
     cfg.decoder.emb.token_emb.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
-    cfg.decoder.lm_head.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
+    # cfg.decoder.lm_head.param_partition_spec = (tp_axis_names, fsdp_axis_names) # shard vocab
 
     set_bias_recursively(cfg, False)
     set_norm_recursively(cfg, normalization)

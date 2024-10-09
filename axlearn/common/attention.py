@@ -57,6 +57,7 @@ from axlearn.common.base_layer import (
     NestedParameterSpec,
     ParameterSpec,
     RematSpec,
+    no_remat,
 )
 from axlearn.common.config import (
     REQUIRED,
@@ -1312,6 +1313,7 @@ class RoFormerQKVLinear(BaseQKVLinear):
         time_step: Optional[Tensor] = None,
     ) -> BaseQKVLinear.Output:
         cfg = self.config
+        query = self._remat_name(query, "input_qkv_ag")
         # Query should have shape of [batch_size, seq_len, num_heads, per_head_dim].
         query, key, value = self.i_proj(query, key=key, value=value)
         if time_step is None:
@@ -1667,6 +1669,7 @@ class MultiheadAttention(BaseLayer):
             ValueError: If `mode` is unsupported.
         """
         cfg = self.config
+        query = self._remat_name(query, "input_qkv_ag")
         # Validate key & value combination.
         if (key is None) != (value is None):
             raise ValueError(
@@ -2386,10 +2389,16 @@ class TransformerAttentionLayer(BaseLayer):
             return atten_state, atten_output
 
         if cfg.structure == "prenorm":
+            target = with_sharding_constraint(target, PartitionSpec('data','model',None))
             skip_input = target  # pre-norm: where normalization happens within the residual part.
+            skip_input = self._remat_name(skip_input, 'residual_skip')
             norm_target = self.norm(target)
+            norm_target = with_sharding_constraint(norm_target, PartitionSpec('data',None,None))
+            #norm_target = self._remat_name(norm_target, 'attention_norm')
             atten_state, atten_output = attention_thunk(norm_target)
+            atten_output = with_sharding_constraint(atten_output, PartitionSpec('data','model',None))
             data = skip_input + self.stochastic_depth(self.dropout(atten_output.data))
+            data = self._remat_name(data, 'residual_add')
         elif cfg.structure == "postnorm":
             # This is the structure used by the original Transformer, BERT, and RoBERTa.
             atten_state, atten_output = attention_thunk(target)
@@ -2684,6 +2693,7 @@ class TransformerFeedForwardLayer(BaseLayer):
             if value not in ["inputs", "linear1_outputs", "linear2_outputs"]:
                 raise NotImplementedError(f"add_value_rms_norm_summary: {value}")
 
+    # @no_remat
     def forward(self, inputs: Tensor) -> Tensor:
         cfg = self.config
 
@@ -2697,18 +2707,24 @@ class TransformerFeedForwardLayer(BaseLayer):
 
         remat_pt1 = "activation"
         remat_pt2 = "linear2"
+        inputs = self._remat_name(inputs, 'residual_input')
         if cfg.structure == "prenorm":
+            x = with_sharding_constraint(inputs, PartitionSpec('data','model',None))
             x = self.norm(inputs)
+            x = self._remat_name(x, 'mlp_norm')
+            x = with_sharding_constraint(x, PartitionSpec('data',None,None))
             x = self._linear1_activation(x)
             x = self._remat_name(x, remat_pt1)
             x = self.dropout1(x)
             x = _linear2(x)
             x = self._remat_name(x, remat_pt2)
+            x = with_sharding_constraint(x, PartitionSpec('data','model',None))
             x = self.dropout2(x)
             x = self.stochastic_depth(x)
             if cfg.residual_weight != 1:
                 x *= cfg.residual_weight
             x += inputs
+            x=self._remat_name(x, 'mlp_residual')
         elif cfg.structure == "postnorm":
             x = self._linear1_activation(inputs)
             x = self._remat_name(x, remat_pt1)
@@ -2749,6 +2765,7 @@ class TransformerFeedForwardLayer(BaseLayer):
             raise NotImplementedError(cfg.structure)
         return x
 
+    # @no_remat
     def _linear1_activation(self, x: Tensor) -> Tensor:
         cfg = self.config
         if isinstance(cfg.activation, tuple):
@@ -3751,8 +3768,30 @@ class PipelinedTransformerLayer(BaseStackedTransformerLayer):
 
     # TODO(sneha): extend_step
 
+def save_all_names_but_these(*names_not_to_save):
+    # Save all values, including unnamed ones, excluding the specified names.
+    names_not_to_save = frozenset(names_not_to_save)
+    def policy(prim, *_, **params):
+        if 'name' in params and params['name'] in names_not_to_save:
+            return False
+        return True
+    return policy
 
 def build_remat_spec(
+    stack_cfg: Union[
+        BaseStackedTransformerLayer.Config, "RepeatedConformerLayer.Config"  # type: ignore
+    ],
+    self_attention: bool = True,
+    feed_forward: bool = False,
+) -> Optional[RematSpec]:
+    return RematSpec(
+        prevent_cse=True,
+        policy=config_for_function(save_all_names_but_these).set(
+            names_not_to_save=(['noname'])
+            ),
+    )
+
+def build_remat_spec_bak(
     stack_cfg: Union[
         BaseStackedTransformerLayer.Config, "RepeatedConformerLayer.Config"  # type: ignore
     ],
@@ -3782,14 +3821,32 @@ def build_remat_spec(
     # TODO(markblee): Switch to using isinstance everywhere.
     if stack_cfg.klass is PipelinedTransformerLayer:
         return None
-
+    print(f'Stack_cfg {stack_cfg}')
+    if jax.default_backend() == 'neuron':
+        fused_qkv_name = stack_cfg.layer.self_attention.attention.input_linear.klass.__name__
+        ffn_name = stack_cfg.layer.feed_forward.klass.__name__
+        attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
+        print(stack_cfg.layer.self_attention.attention)
+        return RematSpec(
+            prevent_cse=stack_cfg.klass is StackedTransformerLayer,
+            # If we are running inside a jax.lax.scan (Repeated/Pipelined transformers
+            # or Repeated Conformers) we can enable common subexpression elimination optimizations.
+            policy=config_for_function(jax.checkpoint_policies.save_any_names_but_these).set(
+#                names_not_to_save=(["before_attention", "before_thunk", "input_to_qkv"] +
+#                    [f"{attention_name}.{el}"
+#                    for el in ['input_qkv_ag', 'o_proj']] +
+#                    [f"{ffn_name}.{el}" for el in ["mlp_norm", "linear2"]]
+#                 )
+                names_not_to_save=(["noname"])
+            ),
+        )
     checkpoints = []
     if self_attention:
         attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
         checkpoints.extend(
             [f"{attention_name}.{el}" for el in ["q_proj", "k_proj", "v_proj", "context", "o_proj"]]
         )
-    if feed_forward and hasattr(stack_cfg.layer, "feed_forward"):
+    if False and feed_forward and hasattr(stack_cfg.layer, "feed_forward"):
         ffn_name = stack_cfg.layer.feed_forward.klass.__name__
         checkpoints.extend([f"{ffn_name}.{el}" for el in ["activation", "linear2"]])
 
