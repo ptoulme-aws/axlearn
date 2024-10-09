@@ -238,23 +238,24 @@ class Learner(BaseLearner):
         self, model_param_specs: NestedParameterSpec
     ) -> NestedPartitionSpec:
         optimizer_model_param_specs = self._get_optimizer_model_params(model_param_specs)
-        logging.info("Creating optimizer param specs Previous")
-        jax.tree_map(lambda x: logging.info(x), optimizer_model_param_specs)
-        def change_axis(x):
-            axis = x.mesh_axes
-            logging.info("printing axis")
-            new_axis = []
-            for i in axis:
-                logging.info(i)
-                if (i == 'fsdp'):
-                    new_axis.append(('fsdp', 'data'))
-                else:
-                    new_axis.append(i)
-            x.mesh_axes = PartitionSpec(*tuple(new_axis))
-            return x
-        optimizer_model_param_specs = jax.tree_map(lambda x: change_axis(x), optimizer_model_param_specs)
-        logging.info("Creating optimizer param specs new")
-        jax.tree_map(lambda x: logging.info(x), optimizer_model_param_specs)
+        # logging.info("Creating optimizer param specs Previous")
+        # jax.tree_map(lambda x: logging.info(x), optimizer_model_param_specs)
+        # def change_axis(x):
+        #     axis = x.mesh_axes
+        #     logging.info("printing axis")
+        #     new_axis = []
+        #     for i in axis:
+        #         logging.info(i)
+        #         if (i == 'fsdp'):
+        #             new_axis.append(('fsdp', 'data'))
+        #         else:
+        #             new_axis.append(i)
+        #     x.mesh_axes = PartitionSpec(*tuple(new_axis))
+        #     return x
+        self.param_specs = optimizer_model_param_specs
+        # optimizer_model_param_specs = jax.tree_map(lambda x: change_axis(x), optimizer_model_param_specs)
+        # logging.info("Creating optimizer param specs new")
+        # jax.tree_map(lambda x: logging.info(x), optimizer_model_param_specs)
         partition_state = dict(optimizer=self.optimizer.partition(optimizer_model_param_specs))
         if self.config.ema.decay is not None:
             partition_state["ema"] = self.ema.partition(model_param_specs)
@@ -538,6 +539,25 @@ class AccumulatedLearner(Learner):
         inputs = jax.tree_util.tree_map(
             lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, 'data', *([None for _ in range(len(x.shape) - 2)]))), inputs
         )
+
+        logging.info("Creating optimizer param specs Previous")
+        jax.tree_map(lambda x : logging.info(x), self.param_specs)
+        def change_axis(spec, param):
+            axis = spec.mesh_axes
+            logging.info("printing axis")
+            new_axis = []
+            for i in axis:
+                logging.info(i)
+                if (i == ('fsdp', 'data')):
+                    new_axis.append(('fsdp'))
+                else:
+                    new_axis.append(i)
+            p = PartitionSpec(*tuple(new_axis))
+            return jax.lax.with_sharding_constraint(param, p)
+            # return x
+        model_params = jax.tree_map(lambda x,y: change_axis(x,y), self.param_specs, model_params)
+        # logging.info("Creating optimizer param specs new")
+        # jax.tree_map(lambda x: logging.info(x), optimizer_model_param_specs)
 
         def _copy_zero(model_tree):
             return jax.tree_map(lambda x: jnp.full_like(x, 0, dtype=jnp.bfloat16), model_tree)
