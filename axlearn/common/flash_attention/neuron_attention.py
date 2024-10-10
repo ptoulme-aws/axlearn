@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import neuronxcc.nki.language as nl
 import numpy as np
 from jax_neuronx import nki_call
-from neuronxcc.nki.kernels.attention import flash_attn_bwd, flash_fwd
+from neuronxcc.nki._private_kernels.legacy.attention import flash_attn_bwd, flash_fwd
 
 if 'LNC' not in os.environ:
     raise ValueError("LNC environment variable is not set")
