@@ -567,7 +567,7 @@ def input_partition_spec(partition: DataPartitionType = DataPartitionType.FULL) 
             mesh.axis_names,
         )
     elif partition == DataPartitionType.DATA:
-        return PartitionSpec('data')
+        return PartitionSpec(("fsdp",'data'))
 
 def data_partition_type_to_spec(partition: DataPartitionType = DataPartitionType.FULL) -> PartitionSpec:
     """Returns a PartitionSpec for the given partition type."""

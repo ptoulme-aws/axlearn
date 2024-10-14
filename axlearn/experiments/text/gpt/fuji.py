@@ -62,7 +62,7 @@ MAX_SEQUENCE_LENGTH = {
     Version.V3: 8192,
 }
 
-TRN_MODEL_AXIS_SIZE=64
+TRN_MODEL_AXIS_SIZE=16
 GRADIENT_ACCUMULATION_MICROBATCHES=4
 
 ROPE_THETA = {
@@ -97,7 +97,7 @@ def get_trainer_kwargs(
     *,
     vocab_size: int,
     version: Version,
-    flash_attention: bool = True,
+    flash_attention: bool = False,
 ) -> Dict[str, Any]:
     """Construct default trainer kwargs given a model size."""
     # tokens_per_batch = 4 * (1024**2)  # 4M tokens.
@@ -216,7 +216,7 @@ def get_trainer_kwargs(
                 ),
                 (   
                     "trn2",
-                    mesh_shape_from_axes(data=-1, model=TRN_MODEL_AXIS_SIZE),
+                    mesh_shape_from_axes(data=-1, fsdp=4, model=TRN_MODEL_AXIS_SIZE),
                 ),
             ),
             eval_batch_size=int(jax.device_count()/TRN_MODEL_AXIS_SIZE),

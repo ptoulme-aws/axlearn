@@ -329,13 +329,13 @@ class RMSNorm(BaseNormalizationLayer):
         x_dtype = x.dtype
         if cfg.forward_dtype is not None:
             x = x.astype(cfg.forward_dtype)
-        x = with_sharding_constraint(x, PartitionSpec('data','model', None))
+        x = with_sharding_constraint(x, PartitionSpec(('fsdp','data'),'model', None))
         moment2 = (x * x).mean(axis=-1, keepdims=True)
         x = x * jax.lax.rsqrt(moment2 + cfg.eps)
         x = x.astype(x_dtype)
-        x = with_sharding_constraint(x, PartitionSpec('data','model', None))
+        x = with_sharding_constraint(x, PartitionSpec(('fsdp','data'),'model', None))
         x = x * self.parameters["scale"]
-        x = with_sharding_constraint(x, PartitionSpec('data','model', None))
+        x = with_sharding_constraint(x, PartitionSpec(('fsdp','data'),'model', None))
         return x
 
 
@@ -1258,11 +1258,11 @@ class Embedding(BaseLayer):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        x = with_sharding_constraint(x, PartitionSpec('data', None))
+        x = with_sharding_constraint(x, PartitionSpec(('fsdp','data'), None))
         emb = self.parameters["weight"]
         emb = with_sharding_constraint(emb, PartitionSpec('model', None))
         activation = emb[x]
-        activation = with_sharding_constraint(activation, PartitionSpec('data', None, None))
+        activation = with_sharding_constraint(activation, PartitionSpec(('fsdp','data'), None, None))
         return activation
 
     def attend(self, x: Tensor) -> Tensor:
