@@ -517,7 +517,7 @@ class AccumulatedLearner(Learner):
         # create evenly sized accumulation microbatches, keep sequence dimension as it is.
         inputs = jax.tree_map(lambda x: x.reshape(self.config.microbatches,  -1, *x.shape[1:]), inputs)
         inputs = jax.tree_util.tree_map(
-            lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, ('fsdp','data'), *([None for _ in range(len(x.shape) - 2)]))), inputs
+            lambda x: jax.lax.with_sharding_constraint(x, PartitionSpec(None, ('data','fsdp'), *([None for _ in range(len(x.shape) - 2)]))), inputs
         )
 
         def _copy_zero(model_tree):

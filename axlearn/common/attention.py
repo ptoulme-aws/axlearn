@@ -1820,7 +1820,7 @@ class MultiheadAttention(BaseLayer):
             attention_logit_biases=attention_logit_biases,
             return_aux=return_aux,
         )
-        output = with_sharding_constraint(output, PartitionSpec(('fsdp','data'), None, None))
+        output = with_sharding_constraint(output, PartitionSpec(('data','fsdp'), None, None))
         return output
 
     def _cap_logits(self, logits: Tensor) -> Tensor:
@@ -2390,15 +2390,15 @@ class TransformerAttentionLayer(BaseLayer):
             return atten_state, atten_output
 
         if cfg.structure == "prenorm":
-            target = with_sharding_constraint(target, PartitionSpec(('fsdp','data'),'model',None))
+            target = with_sharding_constraint(target, PartitionSpec(('data','fsdp'),'model',None))
             skip_input = target  # pre-norm: where normalization happens within the residual part.
             skip_input = self._remat_name(skip_input, 'residual_skip')
             norm_target = self.norm(target)
-            norm_target = with_sharding_constraint(norm_target, PartitionSpec(('fsdp','data'),None,None))
+            norm_target = with_sharding_constraint(norm_target, PartitionSpec(('data','fsdp'),None,None))
             norm_target = checkpoint_name(norm_target, name='before_thunk')
             #norm_target = self._remat_name(norm_target, 'attention_norm')
             atten_state, atten_output = attention_thunk(norm_target)
-            atten_output = with_sharding_constraint(atten_output, PartitionSpec(('fsdp','data'),'model',None))
+            atten_output = with_sharding_constraint(atten_output, PartitionSpec(('data','fsdp'),'model',None))
             data = skip_input + self.stochastic_depth(self.dropout(atten_output.data))
             data = self._remat_name(data, 'residual_add')
         elif cfg.structure == "postnorm":
@@ -2710,16 +2710,16 @@ class TransformerFeedForwardLayer(BaseLayer):
         remat_pt2 = "linear2"
         inputs = self._remat_name(inputs, 'residual_input')
         if cfg.structure == "prenorm":
-            x = with_sharding_constraint(inputs, PartitionSpec(('fsdp','data'),'model',None))
+            x = with_sharding_constraint(inputs, PartitionSpec(('data','fsdp'),'model',None))
             x = self.norm(inputs)
             x = self._remat_name(x, 'mlp_norm')
-            x = with_sharding_constraint(x, PartitionSpec(('fsdp','data'),None,None))
+            x = with_sharding_constraint(x, PartitionSpec(('data','fsdp'),None,None))
             x = self._linear1_activation(x)
             x = self._remat_name(x, remat_pt1)
             x = self.dropout1(x)
             x = _linear2(x)
             x = self._remat_name(x, remat_pt2)
-            x = with_sharding_constraint(x, PartitionSpec(('fsdp','data'),'model',None))
+            x = with_sharding_constraint(x, PartitionSpec(('data','fsdp'),'model',None))
             x = self.dropout2(x)
             x = self.stochastic_depth(x)
             if cfg.residual_weight != 1:
