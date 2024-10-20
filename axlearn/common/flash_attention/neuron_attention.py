@@ -50,13 +50,20 @@ def _mha_forward(query, key, value, causal, softmax_scale):
   attn_output_shape = jax.ShapeDtypeStruct((batch_size, num_heads, q_seq_len, d_model), dtype=query.dtype)
   lse_shape = jax.ShapeDtypeStruct((batch_size, num_heads, nl.tile_size.pmax, q_seq_len // nl.tile_size.pmax), dtype=jnp.float32)
   seed = jnp.array([1])
-  # Call the NKI kernel using nki_call
-  attn_output, lse = nki_call(
-      partial(flash_fwd_shardable if use_lnc else flash_fwd, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0),
-      q, k, v, seed, 
-      out_shape=(attn_output_shape, lse_shape),
-      grid=(batch_size, num_heads, vnc(2)) if use_lnc else (batch_size, num_heads)
-  )
+
+  # Call the NKI kernel
+  if os.environ.get('ENABLE_NEW_UNSHARDED_ATTN_KERNEL'):
+      from neuronxcc.nki.kernels.attention import flash_attn_bwd, flash_fwd
+      from neuronxcc.starfish.penguin.targets.nki.private_api import vnc
+      assert (num_heads % 2) == 0 and (num_heads // 2 > 0), f'unexpect num_heads: {num_heads}'
+      attn_output, lse = flash_fwd[batch_size, vnc(2), num_heads//2](q, k, v, seed, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0)
+  else:
+      attn_output, lse = nki_call(
+          partial(flash_fwd_shardable if use_lnc else flash_fwd, use_causal_mask=causal, softmax_scale=softmax_scale, mixed_precision=True, dropout_p=0.0),
+          q, k, v, seed, 
+          out_shape=(attn_output_shape, lse_shape),
+          grid=(batch_size, num_heads, vnc(2)) if use_lnc else (batch_size, num_heads)
+      )
   # Transpose the output back to the original shape
   attn_output = attn_output.transpose(0, 2, 1, 3)  # [batch_size, q_seq_len, num_heads, d_model]
 
@@ -79,13 +86,19 @@ def _mha_backward(causal, softmax_scale, res, d_attn_output):
   d_value_shape = jax.ShapeDtypeStruct(v.shape, v.dtype)
   seed = jnp.array([1])
 
-  # Call the NKI kernel using nki_call
-  d_query, d_key, d_value = nki_call(
-      partial(flash_attn_bwd_shardable if use_lnc else flash_attn_bwd, use_causal_mask=causal, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale),
-      q, k, v, o, dy, lse, seed,
-      out_shape=[d_query_shape, d_key_shape, d_value_shape],
-      grid=(batch_size, num_heads, vnc(2)) if use_lnc else (batch_size, num_heads)
-  )
+  # Call the NKI kernel
+  if os.environ.get('ENABLE_NEW_UNSHARDED_ATTN_KERNEL'):
+      from neuronxcc.nki.kernels.attention import flash_attn_bwd
+      from neuronxcc.starfish.penguin.targets.nki.private_api import vnc
+      assert (num_heads % 2) == 0 and (num_heads // 2 > 0), f'unexpected num_heads: {num_heads}'
+      d_query, d_key, d_value = flash_attn_bwd[batch_size, vnc(2), num_heads // 2](q, k, v, o, dy, lse, seed, use_causal_mask=causal, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale)
+  else:
+      d_query, d_key, d_value = nki_call(
+          partial(flash_attn_bwd_shardable if use_lnc else flash_attn_bwd, use_causal_mask=causal, mixed_precision=True, dropout_p=0.0, softmax_scale=softmax_scale),
+          q, k, v, o, dy, lse, seed,
+          out_shape=[d_query_shape, d_key_shape, d_value_shape],
+          grid=(batch_size, num_heads, vnc(2)) if use_lnc else (batch_size, num_heads)
+      )
 
   # Batch seq_len heads, head_dim
   # Transpose the gradients back to the original shape
