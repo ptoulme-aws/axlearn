@@ -11,6 +11,7 @@ from axlearn.common.config import (
     ConfigModifier,
     ConfigOr,
     Required,
+    ConfigBase,
     config_class,
     maybe_instantiate,
 )
@@ -145,6 +146,63 @@ class MeshShapeModifier(ConfigModifier):
         cfg.mesh_shape = self._mesh_shape
         return cfg
 
+
+class ModelConfigModifier(ConfigModifier):
+    """Update the model config for the trainer config."""
+
+    @config_class
+    class Config(ConfigModifier.Config):
+        """Configure ModelConfigModifier.
+
+        Attributes:
+            model_cfg_modifications: A mapping from module path
+                (e.g. `model.decoder.transformer.layer`) to a Config.
+        """
+
+        model_cfg_modifications: Required[Dict[str, ConfigBase]] = REQUIRED
+
+    def __init__(self, cfg: Config):
+        super().__init__(cfg)
+        cfg = self.config
+        self._model_cfg_modifications = cfg.model_cfg_modifications
+
+    def __call__(self, cfg: SpmdTrainer.Config) -> SpmdTrainer.Config:
+        """Overwrite the mesh shape.
+
+        Args:
+            cfg: The trainer config to be modified.
+
+        Raises:
+            ValueError: The target module is not found.
+
+        Returns:
+            The modified trainer config.
+        """
+
+        for module_name, model_cfg in self._model_cfg_modifications.items():
+            if not model_cfg:
+                continue
+            # Here we assume x.y.z format.
+            # One example would be model.decoder.transformer.layer.
+            target_modules = module_name.split(".")
+            curr_module = cfg
+            parent_module = None
+
+            for target_module in target_modules:
+                if not hasattr(curr_module, target_module):
+                    raise ValueError(f"{target_module} is not found in {curr_module}.")
+                parent_module = curr_module
+                curr_module = getattr(curr_module, target_module)
+            
+            # Copy configurations from the config being replaced on a best effort basis
+            for key in model_cfg.keys():
+                if key == 'klass':
+                    continue
+                elif hasattr(curr_module, key) and hasattr(curr_module, key):
+                    setattr(model_cfg, key, getattr(curr_module, key))
+            # Replace in the parent config
+            setattr(parent_module, target_module, model_cfg)
+        return cfg
 
 class ChainConfigModifier(ConfigModifier):
     """Chain multiple config modifiers together."""

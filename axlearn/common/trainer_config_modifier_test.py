@@ -5,7 +5,7 @@
 import jax
 from absl.testing import absltest
 
-from axlearn.common import test_utils
+from axlearn.common import causal_lm, test_utils
 from axlearn.common.base_layer import RematSpec
 from axlearn.common.trainer import SpmdTrainer
 from axlearn.common.trainer_config_modifier import (
@@ -13,7 +13,9 @@ from axlearn.common.trainer_config_modifier import (
     GradientAccumulationModifier,
     MeshShapeModifier,
     RematSpecModifier,
+    ModelConfigModifier,
 )
+from axlearn.common.attention import RepeatedTransformerLayer, StackedTransformerLayer
 from axlearn.common.trainer_test import DummyModel
 
 
@@ -63,6 +65,27 @@ class RematSpecModifierTest(test_utils.TestCase):
         # Ensure that the exception is working.
         with self.assertRaisesRegex(ValueError, "unknown is not found in.*"):
             _ = cfg_modifier(cfg)
+
+
+class ModelConfigModifierTest(test_utils.TestCase):
+    def test_remat_policy_override(self):
+        cfg = SpmdTrainer.default_config().set(model=causal_lm.Model.default_config())
+        print(cfg)
+        self.assertRegex(str(cfg.model.decoder), ".*StackedTransformerLayer")
+        
+        cfg_modifier = (
+            ModelConfigModifier.default_config()
+            .set(
+                model_cfg_modifications={
+                    "model.decoder.transformer": RepeatedTransformerLayer.default_config(),
+                }
+            )
+            .instantiate()
+        )
+
+        cfg = cfg_modifier(cfg)
+        # The default StackedTransformerLayer should have changed to RepeatedTransformerLayer
+        self.assertRegex(str(cfg.model.decoder), ".*RepeatedTransformerLayer")
 
 
 class MeshShapeModifierTest(test_utils.TestCase):

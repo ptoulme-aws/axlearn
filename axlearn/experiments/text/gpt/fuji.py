@@ -22,9 +22,11 @@ from axlearn.common.attention import (
     BaseStackedTransformerLayer,
     FusedGroupedQKVLinear,
     FusedQKVLinear,
+    GroupedQKVLinear,
     GroupedQueryAttention,
     MultiheadAttention,
     RepeatedTransformerLayer,
+    StackedTransformerLayer,
     RoFormerQKVLinear,
 )
 from axlearn.common.base_layer import RematSpec
@@ -38,6 +40,7 @@ from axlearn.common.trainer_config_modifier import (
     GradientAccumulationModifier,
     MeshShapeModifier,
     RematSpecModifier,
+    ModelConfigModifier,
 )
 from axlearn.common.utils import extended_checkpoint_policies
 from axlearn.experiments.text.gpt.common import (
@@ -174,6 +177,28 @@ def get_trainer_kwargs(
             train_batch_size=train_batch_size,
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(data=-1, fsdp=8),
+            mesh_rules=(
+                (
+                    "neuron-(trn2|trn2n).48xlarge-64",
+                    ChainConfigModifier.default_config().set(
+                        config_modifiers=[
+                            MeshShapeModifier.default_config().set(
+                                mesh_shape=mesh_shape_from_axes(fsdp=-1, model=4)
+                            ),
+                            ModelConfigModifier.default_config().set(
+                                model_cfg_modifications={
+                                    "model.decoder.transformer": StackedTransformerLayer.default_config(),
+                                    "model.decoder.transformer.layer.self_attention.attention.input_linear.input_linear": (
+                                        None
+                                        if version == Version.V1
+                                        else GroupedQKVLinear.default_config()
+                                    ),
+                                }
+                            ),
+                        ],
+                    ),
+                ),
+            ),
         )
     elif model_size == "3B":
         trainer_kwargs = dict(
@@ -192,6 +217,28 @@ def get_trainer_kwargs(
             train_batch_size=train_batch_size,
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(data=-1, fsdp=8),
+            mesh_rules=(
+                (
+                    "neuron-(trn2|trn2n).48xlarge-64",
+                    ChainConfigModifier.default_config().set(
+                        config_modifiers=[
+                            MeshShapeModifier.default_config().set(
+                                mesh_shape=mesh_shape_from_axes(fsdp=-1, model=4)
+                            ),
+                            ModelConfigModifier.default_config().set(
+                                model_cfg_modifications={
+                                    "model.decoder.transformer": StackedTransformerLayer.default_config(),
+                                    "model.decoder.transformer.layer.self_attention.attention.input_linear.input_linear": (
+                                        None
+                                        if version == Version.V1
+                                        else GroupedQKVLinear.default_config()
+                                    ),
+                                }
+                            ),
+                        ],
+                    ),
+                ),
+            ),
         )
     elif model_size == "7B":
         trainer_kwargs = dict(
@@ -287,6 +334,46 @@ def get_trainer_kwargs(
                     "gpu-(p5.48xlarge|p4de.24xlarge|a3-highgpu-8g)-(256|512|1024)",
                     mesh_shape_from_axes(data=-1, fsdp=8),
                 ),
+                (
+                    "neuron-(trn2|trn2n).48xlarge-64",
+                    ChainConfigModifier.default_config().set(
+                        config_modifiers=[
+                            MeshShapeModifier.default_config().set(
+                                mesh_shape=mesh_shape_from_axes(fsdp=-1, model=4)
+                            ),
+                            ModelConfigModifier.default_config().set(
+                                model_cfg_modifications={
+                                    "model.decoder.transformer": StackedTransformerLayer.default_config(),
+                                    "model.decoder.transformer.layer.self_attention.attention.input_linear.input_linear": (
+                                        None
+                                        if version == Version.V1
+                                        else GroupedQKVLinear.default_config()
+                                    ),
+                                }
+                            ),
+                        ],
+                    ),
+                ),
+                (
+                    "neuron-(trn1|trn1n).32xlarge-64",
+                    ChainConfigModifier.default_config().set(
+                        config_modifiers=[
+                            MeshShapeModifier.default_config().set(
+                                mesh_shape=mesh_shape_from_axes(fsdp=-1, model=8)
+                            ),
+                            ModelConfigModifier.default_config().set(
+                                model_cfg_modifications={
+                                    "model.decoder.transformer": StackedTransformerLayer.default_config(),
+                                    "model.decoder.transformer.layer.self_attention.attention.input_linear.input_linear": (
+                                        None
+                                        if version == Version.V1
+                                        else GroupedQKVLinear.default_config()
+                                    ),
+                                }
+                            ),
+                        ],
+                    ),
+                ),
             ),
         )
     elif model_size == "8B":
@@ -367,6 +454,26 @@ def get_trainer_kwargs(
                     "gpu-(p5.48xlarge|p4de.24xlarge|a3-highgpu-8g)-(256|512|1024)",
                     mesh_shape_from_axes(data=-1, fsdp=8),
                 ),
+                (
+                    "neuron-(trn2|trn2n).48xlarge-64",
+                    ChainConfigModifier.default_config().set(
+                        config_modifiers=[
+                            MeshShapeModifier.default_config().set(
+                                mesh_shape=mesh_shape_from_axes(fsdp=-1, model=4)
+                            ),
+                            ModelConfigModifier.default_config().set(
+                                model_cfg_modifications={
+                                    "model.decoder.transformer": StackedTransformerLayer.default_config(),
+                                    "model.decoder.transformer.layer.self_attention.attention.input_linear.input_linear": (
+                                        None
+                                        if version == Version.V1
+                                        else GroupedQKVLinear.default_config()
+                                    ),
+                                }
+                            ),
+                        ],
+                    ),
+                ),
             ),
         )
     elif model_size == "70B":
@@ -385,7 +492,7 @@ def get_trainer_kwargs(
             ),
             learner_kwargs=dict(peak_lr=1.5e-4, weight_decay=0.1),
             max_sequence_length=max_sequence_length,
-            train_batch_size=train_batch_size,
+            train_batch_size=8,
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
@@ -416,6 +523,26 @@ def get_trainer_kwargs(
                 (
                     "gpu-(p5.48xlarge|p4de.24xlarge)-(512|1024)",
                     mesh_shape_from_axes(data=-1, fsdp=128),
+                ),
+                (
+                    "neuron-(trn2|trn2n).48xlarge-64",
+                    ChainConfigModifier.default_config().set(
+                        config_modifiers=[
+                            MeshShapeModifier.default_config().set(
+                                mesh_shape=mesh_shape_from_axes(fsdp=-1, model=4)
+                            ),
+                            ModelConfigModifier.default_config().set(
+                                model_cfg_modifications={
+                                    "model.decoder.transformer": StackedTransformerLayer.default_config(),
+                                    "model.decoder.transformer.layer.self_attention.attention.input_linear.input_linear": (
+                                        None
+                                        if version == Version.V1
+                                        else GroupedQKVLinear.default_config()
+                                    ),
+                                }
+                            ),
+                        ],
+                    ),
                 ),
             ),
         )
@@ -473,7 +600,8 @@ def model_config(
         ffn_dim = scaled_hidden_dim(scale=8 / 3, round_up_to_multiples_of=256)
     if num_kv_heads:
         atten_cfg = GroupedQueryAttention.default_config()
-        atten_input_linear = FusedGroupedQKVLinear.default_config().set(num_kv_heads=num_kv_heads)
+        qkv_linear = FusedGroupedQKVLinear
+        atten_input_linear = qkv_linear.default_config().set(num_kv_heads=num_kv_heads)
     else:
         atten_cfg = MultiheadAttention.default_config()
         atten_input_linear = FusedQKVLinear.default_config()
