@@ -140,6 +140,7 @@ class FlashAttention(GroupedQueryAttention):
                 cfg.mha_dim_to_partition_spec["btnh"],
                 cfg.mha_dim_to_partition_spec["bsnh"],
                 cfg.mha_dim_to_partition_spec["bsnh"],
+                #NOTE : Please resync this with upstream code.
                 # Bias [batch_size, num_heads, seq_len, seq_len].
                 # cfg.mha_dim_to_partition_spec["bnts"],
                 PartitionSpec(None, None, None, None)
@@ -159,6 +160,8 @@ class FlashAttention(GroupedQueryAttention):
         q_proj = with_sharding_constraint(q_proj, cfg.mha_dim_to_partition_spec["btnh"])
         k_proj = with_sharding_constraint(k_proj, cfg.mha_dim_to_partition_spec["bsnh"])
         v_proj = with_sharding_constraint(v_proj, cfg.mha_dim_to_partition_spec["bsnh"])
+
+        #NOTE : Please resync this with upstream code.
         # if attention_logit_biases is not None:
         #     attention_logit_biases = with_sharding_constraint(
         #         attention_logit_biases, cfg.mha_dim_to_partition_spec["bnts"]
