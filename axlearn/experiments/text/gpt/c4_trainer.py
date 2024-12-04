@@ -55,6 +55,9 @@ from axlearn.experiments.text.gpt.common import (
 )
 from axlearn.experiments.trainer_config_utils import TrainerConfigFn
 
+import jax
+import jax_neuronx
+
 # Sentencepiece vocabs generated from c4/en:3.0.1.
 # See bpe_{32k,128k}.json for the sentencepiece settings.
 _SENTENCEPIECE_MODEL_NAME = {
