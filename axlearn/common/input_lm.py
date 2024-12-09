@@ -171,7 +171,7 @@ def text_to_lm_training_input(
         ds = ds.unbatch()
         # Shuffle so that read order is not dominated by document order.
         if shuffle_buffer_size > 0:
-            ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
+            ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True, seed=42)
         return ds
 
     return process

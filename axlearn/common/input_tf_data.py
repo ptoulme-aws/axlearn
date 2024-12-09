@@ -70,6 +70,7 @@ def tfds_read_config(
     num_shards: Optional[int] = None,
     shard_index: Optional[int] = None,
     read_parallelism: int = 1,
+    seed=None,
     decode_parallelism: int = 32,
 ) -> tfds.ReadConfig:
     """Constructs a ReadConfig for tfds dataset.
@@ -103,6 +104,7 @@ def tfds_read_config(
         input_context=tf.distribute.InputContext(
             num_input_pipelines=num_shards, input_pipeline_id=shard_index
         ),
+        shuffle_seed=seed,
     )
 
 
@@ -268,9 +270,9 @@ def tfds_dataset(
         data_dir = get_data_dir()
 
     if read_config is None:
-        read_config = config_for_function(tfds_read_config).set(is_training=is_training)
+        read_config = config_for_function(tfds_read_config).set(is_training=is_training, seed=42)
     else:
-        read_config = read_config.set(is_training=is_training)
+        read_config = read_config.set(is_training=is_training, seed=42)
 
     def fn() -> tf.data.Dataset:
         local_read_config = read_config.clone()
@@ -306,7 +308,7 @@ def tfds_dataset(
         if shuffle_buffer_size > 0:
             # Subsequent processing may merge/split examples (e.g. for T5), so shuffle examples
             # during training before any processing.
-            ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
+            ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True, seed=42)
         return ds
 
     return fn
@@ -356,7 +358,7 @@ def tfrecord_dataset(
         # Shuffle files to avoid deterministic loading.
         filenames = tf.data.Dataset.from_tensor_slices(glob_files)
         if is_training and shuffle_buffer_size > 0:
-            filenames = filenames.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
+            filenames = filenames.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True, seed=42)
         ds = tf.data.TFRecordDataset(
             filenames,
             compression_type=compression_type,
@@ -366,7 +368,7 @@ def tfrecord_dataset(
         if shuffle_buffer_size > 0:
             # Subsequent processing may merge/split examples (e.g. for T5), so shuffle examples
             # during training before any processing.
-            ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
+            ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True, seed=42)
         return ds
 
     return fn
@@ -978,7 +980,7 @@ def shuffle(shuffle_buffer_size: int) -> DatasetToDatasetFn:
 
     def fn(ds: tf.data.Dataset) -> tf.data.Dataset:
         if shuffle_buffer_size > 0:
-            ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True)
+            ds = ds.shuffle(shuffle_buffer_size, reshuffle_each_iteration=True, seed=42)
 
         return ds
 
