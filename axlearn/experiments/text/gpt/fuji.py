@@ -43,7 +43,7 @@ from axlearn.common.trainer_config_modifier import (
     MeshShapeModifier,
     RematSpecModifier,
 )
-from axlearn.common.utils import DataPartitionType, extended_checkpoint_policies
+from axlearn.common.utils import DataPartitionType, extended_checkpoint_policies, save_only_these_regex_patterns
 from axlearn.experiments.text.gpt.common import (
     STEP_DTYPE,
     SourceBuilder,
@@ -184,7 +184,7 @@ def get_trainer_kwargs(
                     "neuron-(trn2|trn2n).48xlarge-64",
                     mesh_shape_from_axes(fsdp=-1, model=4),
                 ),
-            )
+            ),
         )
     elif model_size == "3B":
         trainer_kwargs = dict(
@@ -208,7 +208,7 @@ def get_trainer_kwargs(
                     "neuron-(trn2|trn2n).48xlarge-64",
                     mesh_shape_from_axes(fsdp=-1, model=4),
                 ),
-            )
+            ),
         )
     elif model_size == "7B":
         trainer_kwargs = dict(
@@ -450,7 +450,31 @@ def get_trainer_kwargs(
                 ),
                 (
                     "neuron-(trn2|trn2n).48xlarge-64",
-                    mesh_shape_from_axes(fsdp=-1, model=4),
+                    ChainConfigModifier.default_config().set(
+                        config_modifiers=[
+                            MeshShapeModifier.default_config().set(
+                                mesh_shape=mesh_shape_from_axes(fsdp=-1, model=4)
+                            ),
+                            RematSpecModifier.default_config().set(
+                                remat_policies={
+                                    "model.decoder.transformer.layer": RematSpec(
+                                        prevent_cse=True,
+                                        policy=config_for_function(save_only_these_regex_patterns).set(
+                                            names_to_save=[
+                                                "^\.?(q_proj)?.*$",
+                                                "^\.?(k_pro)?.*$j",
+                                                "^\.?(v_proj)?.*$",
+                                                "^\.?(TransformerAttentionLayer.residual_add)?.*$",
+                                                "^\.?(TransformerFeedForwardLayer.mlp_residual)?.*$",
+                                                "^\.?(linear1_0)?.*$",
+                                                "^\.?(linear1_1)?.*$",
+                                            ]
+                                        ),
+                                    ),
+                                }
+                            ),
+                        ],
+                    ),
                 ),
             ),
         )
@@ -458,7 +482,9 @@ def get_trainer_kwargs(
         raise NotImplementedError(f"Unknown model size {model_size}.")
     model_kwargs = trainer_kwargs.pop("model_kwargs")
     model_kwargs.setdefault("vocab_size", vocab_size)
-    model_kwargs.setdefault("stack_cfg", None if backend != "neuron" else StackedTransformerLayer.default_config())
+    model_kwargs.setdefault(
+        "stack_cfg", None if backend != "neuron" else StackedTransformerLayer.default_config()
+    )
     trainer_kwargs["model_cfg"] = model_config(**model_kwargs)
     trainer_kwargs["learner_cfg"] = adamw_decoupled_learner_config(
         max_step=trainer_kwargs["max_step"],
@@ -511,7 +537,7 @@ def model_config(
         atten_cfg = GroupedQueryAttention.default_config()
         backend = jax.default_backend()
 
-        qkv_linear =  FusedGroupedQKVLinear if backend != "neuron" else GroupedQKVLinear
+        qkv_linear = FusedGroupedQKVLinear if backend != "neuron" else GroupedQKVLinear
         atten_input_linear = qkv_linear.default_config().set(num_kv_heads=num_kv_heads)
     else:
         atten_cfg = MultiheadAttention.default_config()

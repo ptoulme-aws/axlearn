@@ -23,6 +23,7 @@ import traceback
 import types
 from collections.abc import Mapping, Sequence
 from enum import Enum
+import re
 from typing import Any, Callable, NamedTuple, Optional, TypeVar, Union
 
 import jax
@@ -1464,3 +1465,20 @@ def validate_contains_paths(x: Nested[Tensor], paths: Sequence[str]):
                 f"Input is expected to contain '{path}'; "
                 f"instead, it contains: '{jax.tree_structure(x)}'."
             ) from e
+
+def save_only_these_regex_patterns(*names_to_save):
+    # Save all values, including unnamed ones, excluding the specified names.
+    names_to_save = frozenset(names_to_save)
+    def policy(prim, *_, **params):
+        if 'name' in params:
+            for name_to_save in names_to_save:
+                if re.search(name_to_save, params['name']):
+                    # if name exists and matches any regex pattern specified
+                    return True
+        elif 'name' in params:
+            # named but not specified
+            return False
+        else:
+            # Unnamed tensor is not saved
+            return False
+    return policy

@@ -1259,8 +1259,8 @@ def apply_rotary_position_embeddings(
         Rotary position affined value embeddings with shape [batch_size, seq_len, num_heads, dim]
             if rotary_value == True, else original value embeddings
     """
-    # sin [batch_size, num_heads, sequence_length, embed_size_per_head//2]
-    # cos [batch_size, num_heads, sequence_length, embed_size_per_head//2]
+    # # sin [batch_size, num_heads, sequence_length, embed_size_per_head//2]
+    # # cos [batch_size, num_heads, sequence_length, embed_size_per_head//2]
     # sin, cos = jnp.split(sinusoidal_pos, 2, axis=-1)
     # # sin [θ0,θ1,θ2......θd/2-1] -> sin_pos [θ0,θ0,θ1,θ1,θ2,θ2......θd/2-1,θd/2-1]
     # sin_pos = jnp.reshape(jnp.stack([sin, sin], axis=-1), sinusoidal_pos.shape)
@@ -4131,21 +4131,6 @@ class PipelinedTransformerLayer(BaseStackedTransformerLayer):
 
     # TODO(sneha): extend_step
 
-def save_only_these(*names_to_save):
-    # Save all values, including unnamed ones, excluding the specified names.
-    names_to_save = frozenset(names_to_save)
-    def policy(prim, *_, **params):
-        if 'name' in params and params['name'] in names_to_save:
-            print(f"[WIP] Saving {params['name']}")
-            return True
-        elif 'name' in params:
-            print(f"[WIP] Not saving tensor: {params['name']}")
-            return False
-        else:
-            print("[WIP] Not saving unnamed tensor")
-            return False
-    return policy
-
 def build_remat_spec(
     stack_cfg: Union[
         BaseStackedTransformerLayer.Config, "RepeatedConformerLayer.Config"  # type: ignore
@@ -4180,33 +4165,19 @@ def build_remat_spec(
     if stack_cfg.klass is PipelinedTransformerLayer:
         return None
 
-    backend = jax.default_backend()
     checkpoints = []
     if self_attention:
         attention_name = stack_cfg.layer.self_attention.attention.klass.__name__
-        if backend != "neuron":
-            checkpoints.extend(
-                [f"{attention_name}.{el}" for el in ["q_proj", "k_proj", "v_proj", "context", "o_proj"]]
-            )
-        else:
-            checkpoints.extend(
-                [f"{attention_name}.{el}" for el in ['q_proj', 'k_proj', 'v_proj']] + ["input_to_qkvee", "TransformerAttentionLayer.residual_add", "TransformerFeedForwardLayer.mlp_residual"]
-            )
+        checkpoints.extend(
+            [f"{attention_name}.{el}" for el in ["q_proj", "k_proj", "v_proj", "context", "o_proj"]]
+        )
     if feed_forward and hasattr(stack_cfg.layer, "feed_forward"):
         ffn_name = stack_cfg.layer.feed_forward.klass.__name__
-        if backend != "neuron":
-            checkpoints.extend([f"{ffn_name}.{el}" for el in ["activation", "linear2"]])
-        else:
-            checkpoints.extend([f"{ffn_name}.{el}" for el in ["linear1_0", "linear1_1"]])
+        checkpoints.extend([f"{ffn_name}.{el}" for el in ["activation", "linear2"]])
 
-    if backend != "neuron":
-        policy = config_for_function(jax_remat_policies.save_only_these_names).set(
-            names_which_can_be_saved=checkpoints
-        )
-    else:
-        policy = config_for_function(save_only_these).set(
-            names_to_save=checkpoints
-        )
+    policy = config_for_function(jax_remat_policies.save_only_these_names).set(
+        names_which_can_be_saved=checkpoints
+    )
 
     if offload_dst:
         policy = config_for_function(jax_remat_policies.save_and_offload_only_these_names).set(
