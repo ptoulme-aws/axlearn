@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import Any, Literal, Optional
 
+import os
 import seqio
 import tensorflow as tf
 from absl import logging
