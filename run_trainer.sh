@@ -18,7 +18,7 @@ fi
 # # Editable paths
 
 # Source CONDA
-CONDA_HOME="/home/thiamha/miniconda3/" #TODO : Make this $HOME once everyone has setup miniconda
+CONDA_HOME="/home/${USER}/miniconda3/" #TODO : Make this $HOME once everyone has setup miniconda
 source ${CONDA_HOME}/bin/activate ${CONDA_ENV_NAME}
 
 which python
@@ -67,7 +67,7 @@ export FI_PROVIDER="efa"
 export FI_EFA_FORK_SAFE=1
 export LD_LIBRARY_PATH="$HOME/EFA/aws-ofi-nccl/lib:LD_LIBRARY_PATH"
 
-ARTIFACTS_PATH="/fsx/thiamha/fs/runs/artifacts"
+ARTIFACTS_PATH="/fsx/${USER}/fs/runs/artifacts"
 TEST_ARTIFACTS_PATH="${ARTIFACTS_PATH}/$CONDA_ENV_NAME/t_${TESTNAME}/${JOB_ID}"
 mkdir -p "$TEST_ARTIFACTS_PATH"
 
