@@ -99,7 +99,10 @@ TOTAL_TOKENS = {
     },
     Version.V2: {
         "test": 2 * (1024**4),  # 2T tokens
+        "1B": 2 * (1024**4),  # 2T tokens
+        "3B": 2 * (1024**4),  # 2T tokens
         "7B": 2 * (1024**4),  # 2T tokens
+        "8B": 2 * (1024**4),  # 2T tokens
         "70B": 2 * (1024**4),  # 2T tokens
     },
     Version.V3: {
@@ -224,7 +227,6 @@ def get_trainer_kwargs(
             learner_kwargs=dict(peak_lr=3e-4, weight_decay=0.1),
             max_sequence_length=max_sequence_length,
             train_batch_size=train_batch_size,
-            input_partition_type=None if backend != "neuron" else DataPartitionType.BATCH,
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(data=-1, fsdp=8),
             mesh_rules=(
@@ -416,7 +418,6 @@ def get_trainer_kwargs(
             learner_kwargs=dict(peak_lr=1.5e-4, weight_decay=0.1),
             max_sequence_length=max_sequence_length,
             train_batch_size=train_batch_size,
-            input_partition_type=None if backend != "neuron" else DataPartitionType.BATCH,
             max_step=max_step,
             mesh_shape=mesh_shape_from_axes(fsdp=-1),
             mesh_rules=(
@@ -464,6 +465,7 @@ def get_trainer_kwargs(
         max_step=trainer_kwargs["max_step"],
         **trainer_kwargs.pop("learner_kwargs"),
     )
+    trainer_kwargs.setdefault("input_partition_type", None if backend != "neuron" else DataPartitionType.BATCH)
     # pylint: enable=use-dict-literal
     return trainer_kwargs
 
