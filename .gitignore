@@ -169,3 +169,5 @@ wandb/
 
 # Custom
 .axlearn.config
+
+*.out
